@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>NEXUS // 3D Interactive AI Orb</title>
+    <meta name="description" content="Photorealistic audio-reactive 3D AI Orb with WebGL shaders, zero-key conversational intelligence, and Web Speech API." />
+    <meta name="theme-color" content="#08080a" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- 3D Three.js WebGL Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Center Stage 2D Audio Visualizer Canvas -->
+    <canvas id="visualizer-canvas"></canvas>
+
+    <!-- UI Overlay Layer -->
+    <div id="app-overlay">
+      <!-- Top Navigation Bar -->
+      <header class="top-bar">
+        <div class="brand">
+          <div class="brand-icon"></div>
+          <div class="brand-text">
+            <h1>NEXUS</h1>
+            <span>3D Neural Core</span>
+          </div>
+        </div>
+
+        <!-- Dynamic Status Badge Indicator -->
+        <div class="status-pill" id="status-badge" data-state="idle">
+          <span class="status-dot"></span>
+          <span class="status-label" id="status-text">Idle</span>
+        </div>
+
+        <!-- Controls: Audio Visualizer & Sound Mute -->
+        <div class="top-actions">
+          <button class="lang-toggle-btn" id="btn-toggle-lang" title="Toggle English / Hindi" aria-label="Toggle Language">
+            <span>EN</span>
+          </button>
+          <button class="icon-btn active" id="btn-toggle-visualizer" title="Toggle Audio Visualizer Ring" aria-label="Toggle Visualizer">
+            <svg viewBox="0 0 24 24">
+              <path d="M3 10v4M7 6v12M11 3v18M15 8v8M19 11v2M21 12v0" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="btn-toggle-mute" title="Mute AI Speech Output" aria-label="Mute Audio">
+            <svg id="icon-volume-on" viewBox="0 0 24 24">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+            </svg>
+            <svg id="icon-volume-off" viewBox="0 0 24 24" style="display: none;">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <line x1="23" y1="9" x2="17" y2="15" />
+              <line x1="17" y1="9" x2="23" y2="15" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="btn-clear-chat" title="Clear Conversation" aria-label="Clear Chat">
+            <svg viewBox="0 0 24 24">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Middle Area: Transcript Box & Quick Suggestions -->
+      <main class="middle-area">
+        <!-- Floating Glassmorphic Transcript Card -->
+        <section class="transcript-panel" id="transcript-panel">
+          <div class="transcript-header">
+            <span>Neural Stream</span>
+            <div class="transcript-header-actions">
+              <button class="panel-btn" id="btn-minimize-panel" title="Minimize / Expand Panel" aria-label="Toggle Panel">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="transcript-body" id="transcript-body">
+            <div class="message-item orb-msg">
+              <span class="msg-sender">NEXUS Core</span>
+              <div class="msg-bubble">
+                <p>Neural core online. All WebGL shaders compiled. Tap the mic or type below to converse in real-time.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Bottom Control Dock -->
+      <footer class="bottom-dock">
+        <!-- Quick Prompt Chips -->
+        <div class="prompt-chips">
+          <button class="chip-btn" data-prompt="Explain quantum entanglement">✨ Quantum Entanglement</button>
+          <button class="chip-btn" data-prompt="How does a transformer neural network work?">🧠 Transformer Attention</button>
+          <button class="chip-btn" data-prompt="Write a Python quicksort algorithm">⚡ Python Quicksort</button>
+          <button class="chip-btn" data-prompt="Tell me an AI joke">😄 AI Joke</button>
+          <button class="chip-btn" data-prompt="System diagnostics">📊 System Status</button>
+        </div>
+
+        <div class="controls-row">
+          <!-- Sleek Circular Microphone Button with Pulsing Ring -->
+          <div class="mic-btn-container">
+            <button class="mic-btn" id="btn-mic" title="Click to Speak (or press Space)" aria-label="Microphone Toggle">
+              <svg id="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+              <svg id="icon-mic-active" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="display: none;">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+            <div class="mic-btn-ring"></div>
+          </div>
+
+          <!-- Glassmorphic Text Input Bar -->
+          <div class="input-dock">
+            <input 
+              type="text" 
+              class="text-input" 
+              id="user-input" 
+              placeholder="Ask NEXUS or click mic to speak..." 
+              autocomplete="off" 
+              spellcheck="false" 
+            />
+            <button class="send-btn" id="btn-send" title="Send message (Enter)" aria-label="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="dock-hint">
+          Click & Drag to rotate orb • Zero API key required • 100% Client-side
+        </div>
+      </footer>
+    </div>
+
+    <!-- Application Entry Point -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
