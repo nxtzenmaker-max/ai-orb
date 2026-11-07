@@ -2,23 +2,37 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>NEXUS // 3D Interactive AI Orb</title>
     <meta name="description" content="Photorealistic audio-reactive 3D AI Orb with WebGL shaders, zero-key conversational intelligence, and Web Speech API." />
     <meta name="theme-color" content="#08080a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
+    <!-- Ambient Dynamic Aura Backdrop (Synchronized with 3D Core States) -->
+    <div id="ambient-aura" class="ambient-aura" data-state="idle" aria-hidden="true">
+      <div class="aura-bloom aura-bloom-primary"></div>
+      <div class="aura-bloom aura-bloom-secondary"></div>
+      <div class="aura-bloom aura-bloom-tertiary"></div>
+      <div class="aura-bloom aura-bloom-accent"></div>
+      <div class="aura-film-grain"></div>
+    </div>
+
     <!-- 3D Three.js WebGL Canvas Container -->
     <div id="canvas-container"></div>
 
     <!-- Center Stage 2D Audio Visualizer Canvas -->
     <canvas id="visualizer-canvas"></canvas>
 
-    <!-- UI Overlay Layer -->
+    <!-- Translucent Dimming Backdrop for Transcript Drawer (Mobile & Tablet) -->
+    <div class="transcript-backdrop" id="transcript-backdrop"></div>
+
+    <!-- UI Overlay Layer (Pointer-events: none pass-through to 3D stage) -->
     <div id="app-overlay">
-      <!-- Top Navigation Bar -->
+      <!-- Top Minimalist Status Bar -->
       <header class="top-bar">
         <div class="brand">
           <div class="brand-icon"></div>
@@ -34,7 +48,7 @@
           <span class="status-label" id="status-text">Idle</span>
         </div>
 
-        <!-- Controls: Audio Visualizer & Sound Mute -->
+        <!-- Top Controls: Language & Audio Utilities -->
         <div class="top-actions">
           <button class="lang-toggle-btn" id="btn-toggle-lang" title="Toggle English / Hindi" aria-label="Toggle Language">
             <span>EN</span>
@@ -64,44 +78,49 @@
         </div>
       </header>
 
-      <!-- Middle Area: Transcript Box & Quick Suggestions -->
-      <main class="middle-area">
-        <!-- Floating Glassmorphic Transcript Card -->
-        <section class="transcript-panel" id="transcript-panel">
-          <div class="transcript-header">
-            <span>Neural Stream</span>
-            <div class="transcript-header-actions">
-              <button class="panel-btn" id="btn-minimize-panel" title="Minimize / Expand Panel" aria-label="Toggle Panel">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="transcript-body" id="transcript-body">
-            <div class="message-item orb-msg">
-              <span class="msg-sender">NEXUS Core</span>
-              <div class="msg-bubble">
-                <p>Neural core online. All WebGL shaders compiled. Tap the mic or type below to converse in real-time.</p>
-              </div>
-            </div>
-          </div>
-        </section>
+      <!-- Immersive 3D Stage Zone (Transparent, allows full interaction with 3D Orb) -->
+      <main class="immersive-stage" id="immersive-stage">
+        <!-- Floating Live Speech / Response Toast Pill (shown when drawer is collapsed) -->
+        <div class="live-caption-pill" id="live-caption-pill" title="Tap to open full chat stream">
+          <span class="caption-pulse"></span>
+          <span class="caption-text" id="live-caption-text"></span>
+          <span class="caption-arrow">›</span>
+        </div>
       </main>
 
-      <!-- Bottom Control Dock -->
+      <!-- Thumb-Friendly Bottom Control Dock -->
       <footer class="bottom-dock">
-        <!-- Quick Prompt Chips -->
-        <div class="prompt-chips">
-          <button class="chip-btn" data-prompt="Explain quantum entanglement">✨ Quantum Entanglement</button>
-          <button class="chip-btn" data-prompt="How does a transformer neural network work?">🧠 Transformer Attention</button>
-          <button class="chip-btn" data-prompt="Write a Python quicksort algorithm">⚡ Python Quicksort</button>
-          <button class="chip-btn" data-prompt="Tell me an AI joke">😄 AI Joke</button>
-          <button class="chip-btn" data-prompt="System diagnostics">📊 System Status</button>
+        <!-- Secondary Drawer Trigger & Suggestion Chips Row -->
+        <div class="dock-secondary-row">
+          <!-- Sleek Floating Chat Pill Trigger -->
+          <button class="chat-pill-btn" id="btn-toggle-drawer" title="Open Neural Stream" aria-label="Toggle Conversation Stream">
+            <svg class="chat-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="chat-pill-label">Chat</span>
+            <span class="chat-pill-badge" id="chat-pill-badge">1</span>
+          </button>
+
+          <!-- Quick Suggestion Chips Carousel -->
+          <div class="prompt-chips-container">
+            <div class="prompt-chips" id="prompt-chips">
+              <button class="chip-btn" data-prompt="What is consciousness and can an AI ever be truly aware?">💭 Consciousness</button>
+              <button class="chip-btn" data-prompt="Explain quantum entanglement simply">✨ Quantum</button>
+              <button class="chip-btn" data-prompt="Give me a mind-bending sci-fi story premise">💡 Sci-Fi Idea</button>
+              <button class="chip-btn" data-prompt="How does a transformer neural network work?">🧠 Transformers</button>
+              <button class="chip-btn" data-prompt="Write an idiomatic Python quicksort algorithm">⚡ Quicksort</button>
+              <button class="chip-btn" data-prompt="Chai ya coffee? Deep philosophical debate">☕ Chai vs Coffee</button>
+              <button class="chip-btn" data-prompt="Ek khoobsurat philosophical shayari sunao">📜 Ek Shayari</button>
+              <button class="chip-btn" data-prompt="Tell me a clever AI joke">😄 AI Joke</button>
+              <button class="chip-btn" data-prompt="What happens at the singularity of a black hole?">🌌 Black Hole</button>
+              <button class="chip-btn" data-prompt="System diagnostics and neural core status">📊 System Status</button>
+            </div>
+          </div>
         </div>
 
-        <div class="controls-row">
-          <!-- Sleek Circular Microphone Button with Pulsing Ring -->
+        <!-- Primary Controls: Voice Hero & Sleek Expandable Input -->
+        <div class="controls-row" id="controls-row">
+          <!-- Ergonomic Center Circular Microphone Button with Breathing Glow -->
           <div class="mic-btn-container">
             <button class="mic-btn" id="btn-mic" title="Click to Speak (or press Space)" aria-label="Microphone Toggle">
               <svg id="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -114,16 +133,19 @@
                 <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
-            <div class="mic-btn-ring"></div>
+            <div class="mic-btn-ring mic-ring-1"></div>
+            <div class="mic-btn-ring mic-ring-2"></div>
+            <div class="mic-btn-ring mic-ring-3"></div>
+            <div class="mic-btn-glow"></div>
           </div>
 
-          <!-- Glassmorphic Text Input Bar -->
-          <div class="input-dock">
+          <!-- Glassmorphic Expandable Text Input Bar -->
+          <div class="input-dock" id="input-dock">
             <input 
               type="text" 
               class="text-input" 
               id="user-input" 
-              placeholder="Ask NEXUS or click mic to speak..." 
+              placeholder="Ask NEXUS or tap mic..." 
               autocomplete="off" 
               spellcheck="false" 
             />
@@ -137,10 +159,51 @@
         </div>
 
         <div class="dock-hint">
-          Click & Drag to rotate orb • Zero API key required • 100% Client-side
+          <span>Tap mic to speak</span>
+          <span class="hint-sep">•</span>
+          <span>Drag orb to rotate</span>
         </div>
       </footer>
     </div>
+
+    <!-- Uncongested Swipeable Bottom Sheet Drawer for Transcript -->
+    <section class="transcript-drawer collapsed" id="transcript-drawer" aria-label="Neural Conversation Stream">
+      <!-- Swipe & Drag Handle for Mobile Ergonomics -->
+      <div class="drawer-drag-area" id="drawer-drag-area">
+        <div class="drawer-drag-handle"></div>
+      </div>
+
+      <!-- Drawer Header Bar -->
+      <div class="transcript-header" id="transcript-header">
+        <div class="drawer-title-group">
+          <span class="drawer-status-dot"></span>
+          <span class="drawer-title">Neural Stream</span>
+        </div>
+        <div class="transcript-header-actions">
+          <button class="panel-btn" id="btn-drawer-clear" title="Clear Stream" aria-label="Clear Chat History">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </button>
+          <button class="panel-btn" id="btn-minimize-panel" title="Close Drawer" aria-label="Close Drawer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Message History Stream -->
+      <div class="transcript-body" id="transcript-body">
+        <div class="message-item orb-msg">
+          <span class="msg-sender">NEXUS Core</span>
+          <div class="msg-bubble">
+            <p>Neural core online. All WebGL shaders compiled. Tap the mic or type below to converse in real-time.</p>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- Application Entry Point -->
     <script type="module" src="/src/main.js"></script>

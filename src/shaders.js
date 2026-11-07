@@ -1,7 +1,7 @@
 // src/shaders.js
 // Custom GPU Shaders for 3D Particle Wave AI Orb (Magnific / Freepik Starlight Particle Sphere)
 
-// 3D Simplex Noise GLSL implementation (Stefan Gustavson / Ashima Arts)
+// 3D Simplex Noise & Divergence-Free Curl Noise GLSL implementation
 export const simplexNoiseGLSL = /* glsl */ `
 vec4 permute(vec4 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
 vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
@@ -65,6 +65,35 @@ float snoise(vec3 v) {
   m = m * m;
   return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
+
+// Incompressible Divergence-Free 3D Curl Noise Vector Field
+// Evaluates the curl of a smooth potential vector field using finite differences
+vec3 curlNoise(vec3 p) {
+  const float e = 0.04;
+  vec3 dx = vec3(e, 0.0, 0.0);
+  vec3 dy = vec3(0.0, e, 0.0);
+  vec3 dz = vec3(0.0, 0.0, e);
+
+  // Field phase offsets to avoid axial correlation
+  vec3 o1 = vec3(12.34, 45.67, 78.91);
+  vec3 o2 = vec3(31.41, 62.83, 15.72);
+  vec3 o3 = vec3(98.76, 65.43, 32.19);
+
+  float dFz_dy = snoise(p + dy + o3) - snoise(p - dy + o3);
+  float dFy_dz = snoise(p + dz + o2) - snoise(p - dz + o2);
+
+  float dFx_dz = snoise(p + dz + o1) - snoise(p - dz + o1);
+  float dFz_dx = snoise(p + dx + o3) - snoise(p - dx + o3);
+
+  float dFy_dx = snoise(p + dx + o2) - snoise(p - dx + o2);
+  float dFx_dy = snoise(p + dy + o1) - snoise(p - dy + o1);
+
+  return vec3(
+    dFz_dy - dFy_dz,
+    dFx_dz - dFz_dx,
+    dFy_dx - dFx_dy
+  ) / (2.0 * e);
+}
 `;
 
 // Primary Particle Wave Sphere Vertex Shader
@@ -91,6 +120,8 @@ attribute float aScale;
 attribute float aRandom;
 
 varying vec3 vColor;
+varying vec3 vPrismColor;
+varying float vDispersion;
 varying float vAlpha;
 varying float vRim;
 varying float vDisp;
@@ -101,62 +132,101 @@ void main() {
   
   float t = uTime * uNoiseSpeed;
   
-  // 3-octave harmonic fluid noise waves for liquid organic motion
-  float w1 = snoise(p * uNoiseFreq + vec3(t * 0.7, t * 0.5, t * 0.8));
-  float w2 = snoise(p * (uNoiseFreq * 2.3) - vec3(t * 0.9, -t * 0.7, t * 1.1)) * 0.45;
-  float w3 = snoise(p * (uNoiseFreq * 4.2) + vec3(t * 1.4)) * 0.22;
+  // 1. Multi-frequency Harmonic Standing Waves & Fluid Resonances
+  // Octave 1: Fundamental fluid wave
+  float w1 = snoise(p * uNoiseFreq + vec3(t * 0.65, t * 0.45, t * 0.75));
+  // Octave 2: Secondary harmonic resonance
+  float w2 = snoise(p * (uNoiseFreq * 2.24) - vec3(t * 0.85, -t * 0.65, t * 1.05)) * 0.48;
+  // Octave 3: High-frequency micro-undulation
+  float w3 = snoise(p * (uNoiseFreq * 4.62) + vec3(t * 1.35)) * 0.24;
+  // Octave 4: Ultra-fine crystalline ripple
+  float w4 = snoise(p * (uNoiseFreq * 9.15) - vec3(t * 2.1)) * 0.11;
+
+  // Spherical harmonic standing resonance modes (quantum orbital pulse)
+  float phi = atan(p.z, p.x);
+  float theta = acos(clamp(p.y / max(0.001, length(p)), -1.0, 1.0));
+  float standingHarmonic = sin(phi * 4.0 + t * 1.8) * cos(theta * 5.0 - t * 1.2) * 0.14;
+  float standingOvertone = cos(phi * 7.0 - t * 2.6) * sin(theta * 8.0 + t * 1.9) * 0.07;
   
-  // Dynamic audio reactivity: bass inflates, mid/high frequencies create ripples
-  float audioDisp = (uAudioBass * 0.65 + uAudioIntensity * 0.45) * snoise(p * 3.2 + vec3(uTime * 3.0));
-  float audioRipples = sin(p.y * 14.0 + uTime * 6.0) * (uAudioTreble * 0.22);
+  // Dynamic audio reactivity coupling
+  float audioDisp = (uAudioBass * 0.75 + uAudioIntensity * 0.5) * snoise(p * 2.8 + vec3(uTime * 2.8));
+  float audioRipples = sin(p.y * 16.0 + uTime * 7.0) * (uAudioTreble * 0.28);
+  float shockwavePulse = uStatePulse * 0.25 * sin(uTime * 5.0 + p.y * 6.0);
   
-  float disp = (w1 + w2 + w3) * uDisplacementAmp + audioDisp * 0.38 + audioRipples;
-  disp += uStatePulse * 0.2 * sin(uTime * 4.0 + p.y * 5.0);
+  // Combined radial scalar displacement
+  float disp = (w1 + w2 + w3 + w4 + standingHarmonic + standingOvertone) * uDisplacementAmp 
+             + audioDisp * 0.42 + audioRipples + shockwavePulse;
   
-  // Displace along surface normal
-  vec3 displaced = p + n * disp;
-  
-  // Organic tangential swirl around the polar axis
-  float swirl = (w1 * 0.08 + audioDisp * 0.06);
-  displaced.x += -p.z * swirl;
-  displaced.z += p.x * swirl;
+  // 2. Incompressible Curl-Noise Vector Field Turbulence
+  vec3 curlCoord = p * (uNoiseFreq * 0.95) + vec3(t * 0.35, t * 0.25, t * 0.4);
+  vec3 curlVec = curlNoise(curlCoord);
+
+  // Project curl vector onto the sphere tangent plane: C_tangent = C - n * dot(n, C)
+  vec3 curlTangent = curlVec - n * dot(n, curlVec);
+
+  // Tangential plasma vortex swirl driven by curl noise + audio
+  float curlIntensity = (0.12 + uAudioIntensity * 0.18 + uAudioBass * 0.15) * uDisplacementAmp;
+  vec3 displaced = p + n * disp + curlTangent * curlIntensity;
 
   vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   
-  // View vector & normal for rim calculation
+  // View vector & normal for silhouette rim calculation
   vec3 viewDir = normalize(-mvPosition.xyz);
   vec3 transformedNormal = normalize(normalMatrix * n);
   float rim = 1.0 - abs(dot(transformedNormal, viewDir));
-  rim = pow(clamp(rim, 0.0, 1.0), 1.3);
+  rim = pow(clamp(rim, 0.0, 1.0), 1.25);
   
   // Distance-based particle size attenuation
   float viewDist = max(0.1, -mvPosition.z);
-  float size = (uPointSize * uPixelRatio * 260.0) / viewDist;
+  float size = (uPointSize * uPixelRatio * 270.0) / viewDist;
   
-  // Particles on the outer silhouette are denser and slightly larger, creating the distinctive wavy halo from the reference image
-  gl_PointSize = clamp(size * (aScale * 0.82 + rim * 0.6 + disp * 0.35), 1.0, 22.0);
+  // Outer silhouette and wave crests expand with radiant halo scale
+  float crestBoost = smoothstep(0.0, 0.4, disp) * 0.5;
+  gl_PointSize = clamp(size * (aScale * 0.85 + rim * 0.65 + crestBoost * 0.45), 1.0, 26.0);
   
-  // Reference Image Color Palette:
-  // Predominantly luminous starlight white/platinum with subtle chromatic highlights
-  vec3 starlight = vec3(0.96, 0.98, 1.0);
-  
-  // Chromatic accent sheen on wave crests and silhouette rim
-  vec3 chromatic = mix(uColorA, uColorB, clamp(disp * 1.5 + 0.5, 0.0, 1.0));
-  chromatic = mix(chromatic, uColorC, rim * 0.7);
-  
-  vec3 finalColor = mix(starlight, chromatic, 0.18 + rim * 0.32 + uAudioIntensity * 0.42);
-  
+  // 3. Chromatic Starlight Dispersion:
+  // At the crests of waves, refractive starlight splits into a crisp optical prism spectrum
+  float dispNormalized = clamp((disp / max(0.01, uDisplacementAmp * 1.5)) * 0.5 + 0.5, 0.0, 1.0);
+  float crest = pow(dispNormalized, 2.2);
+
+  // Spectral dispersion colors (Prism spectrum)
+  vec3 spectralViolet = vec3(0.68, 0.38, 1.0);
+  vec3 spectralCyan   = vec3(0.05, 0.92, 1.0);
+  vec3 spectralEmerald= vec3(0.12, 1.0, 0.78);
+  vec3 spectralAmber  = vec3(1.0, 0.76, 0.28);
+  vec3 spectralRose   = vec3(1.0, 0.28, 0.62);
+
+  // Multi-band chromatic dispersion across wave gradient
+  vec3 prismA = mix(spectralCyan, spectralViolet, smoothstep(0.2, 0.6, dispNormalized));
+  vec3 prismB = mix(spectralEmerald, spectralRose, smoothstep(0.5, 0.9, crest));
+  vec3 prismFinal = mix(prismA, prismB, rim * 0.6 + uAudioTreble * 0.4);
+
+  // Theme chromatic accents
+  vec3 themeSheen = mix(uColorA, uColorB, dispNormalized);
+  themeSheen = mix(themeSheen, uColorC, rim * 0.75);
+
+  // Purest luminous starlight platinum core
+  vec3 starlightBase = vec3(0.97, 0.985, 1.0);
+
+  // Blend starlight platinum core with chromatic prism dispersion
+  float dispersionAmount = 0.20 + crest * 0.45 + rim * 0.35 + uAudioIntensity * 0.35;
+  vec3 finalColor = mix(starlightBase, mix(themeSheen, prismFinal, 0.45), clamp(dispersionAmount, 0.0, 0.95));
+
   vColor = finalColor;
+  vPrismColor = prismFinal;
+  vDispersion = crest;
   vRim = rim;
   vDisp = disp;
-  vAlpha = clamp(0.55 + rim * 0.45 + disp * 0.3 + uAudioIntensity * 0.35, 0.25, 1.0);
+  vAlpha = clamp(0.58 + rim * 0.42 + crest * 0.3 + uAudioIntensity * 0.35, 0.25, 1.0);
 }
 `;
 
 // Primary Particle Wave Sphere Fragment Shader
 export const particleWaveSphereFragmentShader = /* glsl */ `
 varying vec3 vColor;
+varying vec3 vPrismColor;
+varying float vDispersion;
 varying float vAlpha;
 varying float vRim;
 varying float vDisp;
@@ -165,17 +235,35 @@ void main() {
   vec2 coord = gl_PointCoord - vec2(0.5);
   float dist = length(coord);
   if (dist > 0.5) discard;
-  
-  // Crisp starlight core with radiant falloff
-  float core = smoothstep(0.18, 0.0, dist);
-  float softGlow = smoothstep(0.5, 0.02, dist);
-  
-  float alpha = (core * 0.75 + softGlow * 0.35) * vAlpha;
-  
-  // Brilliant glowing center for each starlight dot
-  vec3 col = vColor + vec3(core * 0.55);
-  
-  gl_FragColor = vec4(col, alpha);
+
+  // Anti-aliased outer circular boundary
+  float circleAlpha = 1.0 - smoothstep(0.44, 0.50, dist);
+
+  // 1. Ultra-sharp Crystalline Diamond Core
+  float sharpCore = exp(-dist * 16.0) * 1.5;
+  float diamond = max(0.0, 1.0 - (abs(coord.x) + abs(coord.y)) * 2.8);
+  float crystallineCore = sharpCore + diamond * 0.45;
+
+  // 2. Optical 4-point Micro Diffraction Spikes on luminous stars
+  float spikeX = exp(-abs(coord.x) * 38.0) * exp(-abs(coord.y) * 4.5);
+  float spikeY = exp(-abs(coord.y) * 38.0) * exp(-abs(coord.x) * 4.5);
+  float diffraction = (spikeX + spikeY) * (0.35 + vDispersion * 0.35);
+
+  // 3. Multi-tier Radiant Halo
+  float innerGlow = smoothstep(0.42, 0.06, dist);
+  float outerHalo = exp(-dist * 4.2) * (1.0 - smoothstep(0.40, 0.50, dist));
+
+  // Chromatic dispersion fringe at outer halo periphery
+  float haloWeight = innerGlow * 0.65 + outerHalo * 0.5;
+  vec3 haloColor = mix(vColor, vPrismColor, smoothstep(0.15, 0.45, dist) * vDispersion * 0.85);
+
+  // Composite starlight color: crystalline core is blazing platinum-white, halo glows with chromatic dispersion
+  vec3 col = haloColor * haloWeight + vec3(1.0, 1.0, 1.0) * (crystallineCore + diffraction * 0.8);
+
+  // Final smoothed alpha
+  float alpha = (crystallineCore * 0.85 + haloWeight * 0.55 + diffraction * 0.3) * vAlpha * circleAlpha;
+
+  gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
 }
 `;
 
@@ -199,21 +287,28 @@ void main() {
   vec3 p = position;
   vec3 n = normalize(position);
   
-  float t = uTime * 0.35;
-  float wave = snoise(p * 1.8 + vec3(t));
-  float bassPunch = uAudioBass * 0.35;
+  float t = uTime * 0.45;
+  float wave = snoise(p * 2.2 + vec3(t * 0.8, -t * 0.6, t));
+  float wave2 = snoise(p * 4.4 - vec3(t * 1.2)) * 0.35;
+  float bassPunch = uAudioBass * 0.45;
   
-  vec3 displaced = p + n * (wave * 0.12 + bassPunch);
+  // Dense core breathing and expansion
+  vec3 displaced = p + n * ((wave + wave2) * 0.14 + bassPunch);
+  
+  // Tangential vortex rotation in core
+  float vortex = (wave * 0.08 + uAudioBass * 0.12);
+  displaced.x += -p.z * vortex;
+  displaced.z += p.x * vortex;
   
   vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   
   float viewDist = max(0.1, -mvPosition.z);
-  gl_PointSize = clamp((uPointSize * uPixelRatio * 180.0) / viewDist * aScale, 1.0, 14.0);
+  gl_PointSize = clamp((uPointSize * uPixelRatio * 200.0) / viewDist * aScale, 1.0, 16.0);
   
-  vec3 coreWhite = vec3(0.92, 0.96, 1.0);
-  vColor = mix(coreWhite, uCoreColor, 0.4 + uAudioBass * 0.4);
-  vAlpha = clamp(0.4 + 0.5 * abs(wave) + uAudioIntensity * 0.4, 0.2, 0.95);
+  vec3 coreWhite = vec3(0.96, 0.98, 1.0);
+  vColor = mix(coreWhite, uCoreColor, 0.35 + uAudioBass * 0.45);
+  vAlpha = clamp(0.45 + 0.5 * abs(wave) + uAudioIntensity * 0.45, 0.25, 0.98);
 }
 `;
 
@@ -227,8 +322,14 @@ void main() {
   float dist = length(coord);
   if (dist > 0.5) discard;
   
-  float glow = smoothstep(0.5, 0.05, dist);
-  gl_FragColor = vec4(vColor, glow * vAlpha * 0.7);
+  float circleAlpha = 1.0 - smoothstep(0.44, 0.50, dist);
+  float core = exp(-dist * 14.0) * 1.4;
+  float glow = smoothstep(0.48, 0.05, dist);
+  
+  vec3 col = vColor + vec3(core * 0.6);
+  float alpha = (core * 0.7 + glow * 0.4) * vAlpha * circleAlpha;
+  
+  gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
 }
 `;
 
@@ -260,10 +361,10 @@ void main() {
   transformed += normalize(transformed) * (uAudioIntensity * 0.35);
   
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
-  gl_PointSize = aSize * (260.0 / -mvPosition.z) * uPixelRatio;
+  gl_PointSize = aSize * (270.0 / -mvPosition.z) * uPixelRatio;
   gl_Position = projectionMatrix * mvPosition;
   
-  vAlpha = clamp(0.3 + 0.6 * sin(uTime * 1.8 + aPhase), 0.15, 0.9);
+  vAlpha = clamp(0.35 + 0.6 * sin(uTime * 1.8 + aPhase), 0.15, 0.95);
 }
 `;
 
@@ -276,7 +377,13 @@ void main() {
   float dist = length(coord);
   if (dist > 0.5) discard;
   
+  float circleAlpha = 1.0 - smoothstep(0.44, 0.50, dist);
+  float core = exp(-dist * 12.0) * 1.2;
   float glow = smoothstep(0.5, 0.0, dist);
-  gl_FragColor = vec4(vColor, glow * vAlpha * 0.8);
+  
+  vec3 col = vColor + vec3(core * 0.5);
+  float alpha = (core * 0.6 + glow * 0.5) * vAlpha * circleAlpha;
+  
+  gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
 }
 `;

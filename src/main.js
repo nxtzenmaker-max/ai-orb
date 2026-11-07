@@ -2,6 +2,7 @@
 import { AIOrb } from './orb.js';
 import { VoiceManager } from './voice.js';
 import { AIEngine } from './ai.js';
+import { sound } from './sound.js';
 
 // DOM Elements
 const canvasContainer = document.getElementById('canvas-container');
@@ -14,15 +15,21 @@ const iconMicActive = document.getElementById('icon-mic-active');
 const userInput = document.getElementById('user-input');
 const btnSend = document.getElementById('btn-send');
 const transcriptBody = document.getElementById('transcript-body');
-const transcriptPanel = document.getElementById('transcript-panel');
+const transcriptDrawer = document.getElementById('transcript-drawer') || document.getElementById('transcript-panel');
+const transcriptBackdrop = document.getElementById('transcript-backdrop');
+const btnToggleDrawer = document.getElementById('btn-toggle-drawer');
 const btnMinimizePanel = document.getElementById('btn-minimize-panel');
+const btnDrawerClear = document.getElementById('btn-drawer-clear');
+const drawerDragArea = document.getElementById('drawer-drag-area');
+const chatPillBadge = document.getElementById('chat-pill-badge');
+const liveCaptionPill = document.getElementById('live-caption-pill');
+const liveCaptionText = document.getElementById('live-caption-text');
 const btnToggleVisualizer = document.getElementById('btn-toggle-visualizer');
 const btnToggleMute = document.getElementById('btn-toggle-mute');
 const iconVolumeOn = document.getElementById('icon-volume-on');
 const iconVolumeOff = document.getElementById('icon-volume-off');
 const btnClearChat = document.getElementById('btn-clear-chat');
 const btnToggleLang = document.getElementById('btn-toggle-lang');
-const promptChips = document.querySelectorAll('.chip-btn');
 
 // Instantiate Core Engines
 const orb = new AIOrb(canvasContainer);
@@ -31,13 +38,15 @@ const ai = new AIEngine();
 let currentInterimBubble = null;
 let isVisualizerActive = true;
 let isMuted = false;
+let messageCount = 1;
+let captionTimeout = null;
 
 // 2D Audio Waveform Ring Visualizer
 const vCtx = visualizerCanvas.getContext('2d');
 let lastAudioMetrics = { intensity: 0, bass: 0, treble: 0 };
 
 function resizeVisualizer() {
-  const size = Math.min(window.innerWidth * 0.85, window.innerHeight * 0.85, 460);
+  const size = Math.min(window.innerWidth * 0.85, window.innerHeight * 0.85, 440);
   visualizerCanvas.width = size;
   visualizerCanvas.height = size;
 }
@@ -112,11 +121,37 @@ function formatMarkdown(text) {
   return `<p>${html}</p>`;
 }
 
+// Update Chat Badge Indicator
+function updateBadge() {
+  if (chatPillBadge) {
+    chatPillBadge.textContent = messageCount;
+  }
+}
+
+// Floating Live Caption Toast Pill (shown when drawer is collapsed)
+function showLiveCaption(text) {
+  if (!liveCaptionPill || !liveCaptionText) return;
+  // If drawer is already open, do not obstruct with the toast pill
+  if (transcriptDrawer && !transcriptDrawer.classList.contains('collapsed')) {
+    liveCaptionPill.classList.remove('visible');
+    return;
+  }
+  const cleanSnippet = text.replace(/<[^>]*>/g, '').trim();
+  if (!cleanSnippet) return;
+  liveCaptionText.textContent = cleanSnippet;
+  liveCaptionPill.classList.add('visible');
+  clearTimeout(captionTimeout);
+  captionTimeout = setTimeout(() => {
+    liveCaptionPill.classList.remove('visible');
+  }, 4800);
+}
+
 // Append message to transcript container with auto-scroll
 function appendMessage(sender, content, isInterim = false) {
   if (isInterim && currentInterimBubble) {
     currentInterimBubble.querySelector('.msg-bubble').innerHTML = `<p class="live-interim">${content}...</p>`;
     transcriptBody.scrollTop = transcriptBody.scrollHeight;
+    showLiveCaption(content);
     return;
   }
 
@@ -133,9 +168,13 @@ function appendMessage(sender, content, isInterim = false) {
   if (isInterim) {
     bubble.innerHTML = `<p class="live-interim">${content}...</p>`;
     currentInterimBubble = msgEl;
+    showLiveCaption(content);
   } else {
     bubble.innerHTML = formatMarkdown(content);
     currentInterimBubble = null;
+    messageCount++;
+    updateBadge();
+    showLiveCaption(content.slice(0, 90));
   }
 
   msgEl.appendChild(senderLabel);
@@ -146,7 +185,7 @@ function appendMessage(sender, content, isInterim = false) {
   return bubble;
 }
 
-// Typewriter effect for streaming assistant text
+// Typewriter effect for streaming assistant text with natural human-like cadence
 async function streamMessage(fullText, onProgress) {
   const bubble = appendMessage('orb', '');
   let currentText = '';
@@ -157,8 +196,18 @@ async function streamMessage(fullText, onProgress) {
     bubble.innerHTML = formatMarkdown(currentText);
     transcriptBody.scrollTop = transcriptBody.scrollHeight;
     if (onProgress) onProgress();
-    // Rapid typewriter pace (18-28ms per word)
-    await new Promise(r => setTimeout(r, 22));
+
+    // Natural typing cadence with breathing pauses for punctuation
+    const word = words[i];
+    let pause = 20;
+    if (/[.!?]$/.test(word)) {
+      pause = 65; // Sentence boundary pause
+    } else if (/[,;:]$/.test(word)) {
+      pause = 36; // Mid-sentence breath pause
+    } else if (word.includes('\n')) {
+      pause = 44; // Paragraph line break pause
+    }
+    await new Promise(r => setTimeout(r, pause));
   }
 }
 
@@ -186,6 +235,99 @@ function setStatus(state) {
   }
 }
 
+// Drawer Expansion & Collapse Logic
+function openDrawer() {
+  if (!transcriptDrawer) return;
+  transcriptDrawer.classList.remove('collapsed');
+  if (transcriptBackdrop) transcriptBackdrop.classList.add('active');
+  if (liveCaptionPill) liveCaptionPill.classList.remove('visible');
+  transcriptBody.scrollTop = transcriptBody.scrollHeight;
+}
+
+function closeDrawer() {
+  if (!transcriptDrawer) return;
+  transcriptDrawer.classList.add('collapsed');
+  if (transcriptBackdrop) transcriptBackdrop.classList.remove('active');
+  transcriptDrawer.style.transform = '';
+}
+
+function toggleDrawer() {
+  if (!transcriptDrawer) return;
+  sound.playChime('tap');
+  if (transcriptDrawer.classList.contains('collapsed')) {
+    openDrawer();
+  } else {
+    closeDrawer();
+  }
+}
+
+// Wire Drawer Triggers
+if (btnToggleDrawer) {
+  btnToggleDrawer.addEventListener('click', toggleDrawer);
+}
+if (btnMinimizePanel) {
+  btnMinimizePanel.addEventListener('click', () => {
+    sound.playChime('tap');
+    closeDrawer();
+  });
+}
+if (transcriptBackdrop) {
+  transcriptBackdrop.addEventListener('click', () => {
+    sound.playChime('tap');
+    closeDrawer();
+  });
+}
+if (liveCaptionPill) {
+  liveCaptionPill.addEventListener('click', () => {
+    sound.playChime('tap');
+    liveCaptionPill.classList.remove('visible');
+    openDrawer();
+  });
+}
+if (btnDrawerClear) {
+  btnDrawerClear.addEventListener('click', () => {
+    btnClearChat.click();
+  });
+}
+
+// Swipe down to dismiss on mobile
+if (drawerDragArea && transcriptDrawer) {
+  let startY = 0;
+  let currentDeltaY = 0;
+  let isDragging = false;
+
+  drawerDragArea.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      startY = e.touches[0].clientY;
+      currentDeltaY = 0;
+      isDragging = true;
+      transcriptDrawer.style.transition = 'none';
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    const currentY = e.touches[0].clientY;
+    const delta = currentY - startY;
+    if (delta > 0) {
+      currentDeltaY = delta;
+      transcriptDrawer.style.transform = `translateY(${delta}px)`;
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchend', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    transcriptDrawer.style.transition = '';
+    if (currentDeltaY > 65) {
+      sound.playChime('tap');
+      closeDrawer();
+    } else {
+      transcriptDrawer.style.transform = '';
+    }
+  });
+}
+
 // Voice Manager Setup
 const voiceManager = new VoiceManager({
   onTranscript: ({ interim, final }) => {
@@ -197,7 +339,7 @@ const voiceManager = new VoiceManager({
         currentInterimBubble.remove();
         currentInterimBubble = null;
       }
-      handleUserPrompt(final);
+      handleUserPrompt(final, true);
     }
   },
   onStateChange: (state) => {
@@ -208,12 +350,13 @@ const voiceManager = new VoiceManager({
     orb.setAudioData(data);
   },
   onError: (msg) => {
+    sound.playChime('error');
     appendMessage('orb', `*Notice:* ${msg}`);
   }
 });
 
 // Process User Query
-async function handleUserPrompt(promptText) {
+async function handleUserPrompt(promptText, isVoice = false) {
   const query = promptText.trim();
   if (!query) return;
 
@@ -221,7 +364,12 @@ async function handleUserPrompt(promptText) {
   appendMessage('user', query);
   userInput.value = '';
 
-  // Trigger Thinking State
+  // Trigger completion sound feedback for typed input
+  if (!isVoice) {
+    sound.playChime('complete');
+  }
+
+  // Trigger Thinking State & Shockwave
   setStatus('thinking');
   orb.triggerShockwave();
 
@@ -237,6 +385,7 @@ async function handleUserPrompt(promptText) {
     await streamMessage(response);
   } catch (err) {
     console.error('Error generating answer:', err);
+    sound.playChime('error');
     appendMessage('orb', 'An error occurred while synthesizing a neural response.');
     setStatus('idle');
   }
@@ -244,55 +393,40 @@ async function handleUserPrompt(promptText) {
 
 // Event Listeners: Input & Send
 btnSend.addEventListener('click', () => {
+  sound.playChime('tap');
   handleUserPrompt(userInput.value);
 });
 
 userInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    sound.playChime('tap');
     handleUserPrompt(userInput.value);
   }
 });
 
 // Mic Toggle
 btnMic.addEventListener('click', () => {
+  sound.playChime('tap');
   voiceManager.toggleListening();
 });
 
-// Suggestion Chips
-promptChips.forEach(chip => {
-  chip.addEventListener('click', () => {
+// Event Delegation for Prompt Suggestion Chips (seamless with static & dynamic chips)
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip-btn');
+  if (chip) {
+    sound.playChime('tap');
     const prompt = chip.dataset.prompt;
     if (prompt) {
       handleUserPrompt(prompt);
     }
-  });
-});
-
-// Panel Minimize / Expand
-let isPanelMinimized = false;
-btnMinimizePanel.addEventListener('click', () => {
-  isPanelMinimized = !isPanelMinimized;
-  if (isPanelMinimized) {
-    transcriptPanel.classList.add('minimized');
-    btnMinimizePanel.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="18 15 12 9 6 15"></polyline>
-      </svg>
-    `;
-  } else {
-    transcriptPanel.classList.remove('minimized');
-    btnMinimizePanel.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="6 9 12 15 18 9"></polyline>
-      </svg>
-    `;
   }
 });
 
 // Toggle Visualizer
 btnToggleVisualizer.addEventListener('click', () => {
   isVisualizerActive = !isVisualizerActive;
+  sound.playChime('toggle');
   btnToggleVisualizer.classList.toggle('active', isVisualizerActive);
   visualizerCanvas.classList.toggle('hidden', !isVisualizerActive);
 });
@@ -301,15 +435,20 @@ btnToggleVisualizer.addEventListener('click', () => {
 btnToggleMute.addEventListener('click', () => {
   isMuted = !isMuted;
   voiceManager.setMute(isMuted);
+  sound.setMute(isMuted);
   btnToggleMute.classList.toggle('active', isMuted);
   iconVolumeOn.style.display = isMuted ? 'none' : 'block';
   iconVolumeOff.style.display = isMuted ? 'block' : 'none';
+  if (!isMuted) {
+    sound.playChime('toggle');
+  }
 });
 
 // Language Toggle (English / Hindi)
 let currentLang = 'en';
 if (btnToggleLang) {
   btnToggleLang.addEventListener('click', () => {
+    sound.playChime('tap');
     currentLang = currentLang === 'en' ? 'hi' : 'en';
     const langCode = currentLang === 'hi' ? 'hi-IN' : 'en-US';
     voiceManager.setLanguage(langCode);
@@ -321,6 +460,7 @@ if (btnToggleLang) {
 
 // Clear Chat History
 btnClearChat.addEventListener('click', () => {
+  sound.playChime('clear');
   transcriptBody.innerHTML = `
     <div class="message-item orb-msg">
       <span class="msg-sender">NEXUS Core</span>
@@ -329,6 +469,8 @@ btnClearChat.addEventListener('click', () => {
       </div>
     </div>
   `;
+  messageCount = 1;
+  updateBadge();
 });
 
 // Global Keyboard Shortcuts
@@ -336,10 +478,16 @@ window.addEventListener('keydown', (e) => {
   // Space bar toggles mic when not inside an active text input
   if (e.code === 'Space' && document.activeElement !== userInput) {
     e.preventDefault();
+    sound.playChime('tap');
     voiceManager.toggleListening();
   }
-  // Escape stops speech synthesis or listening
+  // Escape stops speech synthesis or listening, or closes drawer
   if (e.key === 'Escape') {
+    if (transcriptDrawer && !transcriptDrawer.classList.contains('collapsed')) {
+      sound.playChime('tap');
+      closeDrawer();
+      return;
+    }
     voiceManager.stopListening();
     voiceManager.stopSpeaking();
   }

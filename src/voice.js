@@ -1,5 +1,8 @@
 // src/voice.js
 // Zero-config Speech Recognition, Speech Synthesis, and Web Audio API Analyzer
+// Integrated with procedural Web Audio sound synthesis for harmonious sensory feedback.
+
+import { sound } from './sound.js';
 
 export class VoiceManager {
   constructor({ onTranscript, onStateChange, onAudioData, onError }) {
@@ -15,7 +18,6 @@ export class VoiceManager {
     this.audioContext = null;
     this.analyser = null;
     this.micStream = null;
-    this.syntheticGain = null;
     this.dataArray = null;
     this.animationFrameId = null;
 
@@ -48,11 +50,12 @@ export class VoiceManager {
       this.recognition = new SpeechRecognition();
       this.recognition.continuous = false;
       this.recognition.interimResults = true;
-      this.recognition.lang = 'en-US';
+      this.recognition.lang = this.lang || 'en-US';
 
       this.recognition.onstart = () => {
         this.isListening = true;
         this.onStateChange('listening');
+        sound.playChime('activate');
         this.startMicAudioAnalysis();
       };
 
@@ -69,11 +72,15 @@ export class VoiceManager {
           }
         }
 
+        if (finalText) {
+          sound.playChime('complete');
+        }
+
         this.onTranscript({ interim: interimText, final: finalText });
       };
 
       this.recognition.onerror = (event) => {
-        console.warn('Speech recognition error event:', event.error);
+        console.warn('Speech recognition notice:', event.error);
         if (event.error !== 'no-speech' && event.error !== 'aborted') {
           this.onError(`Speech recognition notice: ${event.error}`);
         }
@@ -96,16 +103,16 @@ export class VoiceManager {
       const voices = this.speechSynthesis.getVoices();
       if (!voices || voices.length === 0) return;
 
-      // Prefer voice matching the selected language
       const isHindi = this.lang && this.lang.startsWith('hi');
       let preferred = null;
+
       if (isHindi) {
         preferred = voices.find(v => v.lang.startsWith('hi') || v.name.toLowerCase().includes('hindi')) ||
                     voices.find(v => v.lang.includes('IN')) ||
                     voices.find(v => v.lang.startsWith('en'));
       } else {
         preferred = voices.find(v => 
-          (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Daniel')) &&
+          (v.name.includes('Natural') || v.name.includes('Google UK English Female') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Daniel')) &&
           v.lang.startsWith('en')
         ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
       }
@@ -144,6 +151,8 @@ export class VoiceManager {
         this.analyser.fftSize = 128;
         this.analyser.smoothingTimeConstant = 0.8;
         this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+        // Connect procedural sound synthesizer to the same analyser so the orb reacts to chimes
+        sound.connectAnalyser(this.analyser);
       }
 
       if (!this.micStream) {
@@ -250,7 +259,6 @@ export class VoiceManager {
     try {
       this.recognition.start();
     } catch (err) {
-      // If already started or error
       console.warn('Recognition start caught:', err);
     }
   }
@@ -299,12 +307,14 @@ export class VoiceManager {
     if (this.selectedVoice) {
       utterance.voice = this.selectedVoice;
     }
-    utterance.rate = 1.05; // Slightly brisk, modern AI cadence
+    utterance.rate = 1.05; // Modern AI cadence
     utterance.pitch = 1.0;
 
     utterance.onstart = () => {
       this.isSpeaking = true;
       this.onStateChange('speaking');
+      // Gentle ambient chime shimmer when speech begins
+      sound.playChime('response');
       this.startSyntheticAnalysisLoop();
     };
 
@@ -317,7 +327,7 @@ export class VoiceManager {
     };
 
     utterance.onerror = (e) => {
-      console.warn('Speech synthesis error:', e);
+      console.warn('Speech synthesis notice:', e);
       this.isSpeaking = false;
       this.onStateChange('idle');
       if (onComplete) onComplete();
@@ -336,6 +346,7 @@ export class VoiceManager {
 
   setMute(muted) {
     this.isMuted = muted;
+    sound.setMute(muted);
     if (muted && this.isSpeaking) {
       this.stopSpeaking();
     }

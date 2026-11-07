@@ -11,7 +11,7 @@ import {
 } from './shaders.js';
 
 // Color themes and animation profiles for each orb state
-// Pristine starlight silver/white is the foundation, with subtle state-based chromatic luminescence
+// Pristine starlight platinum/silver is the foundation, with rich state-based chromatic luminescence
 const STATE_PROFILES = {
   idle: {
     colorBase: new THREE.Color('#ffffff'), // Luminous starlight
@@ -89,12 +89,42 @@ export class AIOrb {
     this.audioTreble = 0.0;
     this.smoothAudio = { intensity: 0, bass: 0, treble: 0 };
 
-    // Mouse / Interaction controls
+    // Mobile Performance & Adaptive Resolution (Cap pixel ratio at 2.0)
+    this.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2.0);
+    this.currentPixelRatio = this.maxPixelRatio;
+    this.fpsFrameCount = 0;
+    this.lastFpsTimestamp = performance.now();
+
+    // Camera & Zoom Control
+    this.targetCameraDistance = 7.0;
+    this.minCameraDist = 4.2;
+    this.maxCameraDist = 10.5;
+
+    // Device Orientation (Gyroscope / Tilt)
+    this.gyro = {
+      available: false,
+      targetX: 0,
+      targetY: 0,
+      currentX: 0,
+      currentY: 0,
+      permissionRequested: false
+    };
+
+    // Mouse / Touch Interaction & Momentum Physics
     this.mouse = { x: 0, y: 0, targetX: 0, targetY: 0 };
     this.isDragging = false;
-    this.previousMousePosition = { x: 0, y: 0 };
-    this.dragRotation = { x: 0, y: 0 };
+    this.previousPointerPos = { x: 0, y: 0 };
+    this.pointerVelocity = { x: 0, y: 0 };
+    this.inertiaVelocity = { x: 0, y: 0 };
+    this.lastPointerMoveTime = 0;
+    this.lastTapTime = 0;
     this.shockwave = 0.0;
+
+    // Multi-touch Pinch Tracking
+    this.pinch = {
+      active: false,
+      lastDist: 0
+    };
 
     this.clock = new THREE.Clock();
 
@@ -102,8 +132,20 @@ export class AIOrb {
     this.initParticleWaveSphere();
     this.initInnerPointCore();
     this.initOuterDust();
+    this.initGyroscope();
     this.initEventListeners();
     this.animate();
+  }
+
+  // Haptic Feedback Tactile Engine
+  triggerHaptic(pattern = 12) {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(pattern);
+      } catch (e) {
+        // Safe fallback for browsers/environments that restrict vibration
+      }
+    }
   }
 
   initScene() {
@@ -113,26 +155,28 @@ export class AIOrb {
     const height = this.container.clientHeight || window.innerHeight;
 
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    this.camera.position.set(0, 0, 7.0);
+    this.camera.position.set(0, 0, this.targetCameraDistance);
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
-      powerPreference: 'high-performance'
+      powerPreference: 'high-performance',
+      stencil: false,
+      depth: true
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.currentPixelRatio);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 1.35;
 
     this.container.appendChild(this.renderer.domElement);
 
-    // Group for combined rotations & parallax
+    // Group for combined rotations, gyroscope tilt & parallax
     this.orbGroup = new THREE.Group();
     this.scene.add(this.orbGroup);
   }
 
-  // 1. Primary Particle Wave Sphere (35,000+ concentric starlight points)
+  // 1. Primary Particle Wave Sphere (~35,000+ concentric starlight points)
   initParticleWaveSphere() {
     const radius = 2.15;
     const rings = 190;
@@ -147,7 +191,6 @@ export class AIOrb {
       const v = r / rings;
       const phi = v * Math.PI; // 0 to PI
       const ringRadius = Math.sin(phi);
-      const yBase = Math.cos(phi) * radius;
 
       // Density scales with perimeter of latitude circle
       const pointsInRing = Math.max(1, Math.round(ringRadius * maxPointsPerRing));
@@ -155,7 +198,7 @@ export class AIOrb {
       for (let p = 0; p < pointsInRing; p++) {
         const u = p / pointsInRing;
         // Small organic angular jitter to avoid rigid computer lines
-        const thetaJitter = (Math.random() - 0.5) * (0.015);
+        const thetaJitter = (Math.random() - 0.5) * 0.015;
         const theta = u * Math.PI * 2 + thetaJitter;
 
         const radialJitter = (Math.random() - 0.5) * 0.035;
@@ -167,9 +210,9 @@ export class AIOrb {
 
         positions.push(x, y, z);
 
-        // Dot size variation: mixture of small stars and brighter focal dots
-        const isBrightStar = Math.random() < 0.08;
-        const scale = isBrightStar ? (1.3 + Math.random() * 0.7) : (0.75 + Math.random() * 0.45);
+        // Dot size variation: mixture of small stars and brighter crystalline focal stars
+        const isBrightStar = Math.random() < 0.09;
+        const scale = isBrightStar ? (1.35 + Math.random() * 0.75) : (0.75 + Math.random() * 0.45);
         scales.push(scale);
 
         randoms.push(Math.random());
@@ -190,7 +233,7 @@ export class AIOrb {
       uNoiseFreq: { value: this.activeValues.noiseFreq },
       uNoiseSpeed: { value: this.activeValues.noiseSpeed },
       uPointSize: { value: this.activeValues.pointSize },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uPixelRatio: { value: this.currentPixelRatio },
       uColorBase: { value: this.activeValues.colorBase },
       uColorA: { value: this.activeValues.colorA },
       uColorB: { value: this.activeValues.colorB },
@@ -240,8 +283,8 @@ export class AIOrb {
       uTime: { value: 0.0 },
       uAudioBass: { value: 0.0 },
       uAudioIntensity: { value: 0.0 },
-      uPointSize: { value: 1.3 },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uPointSize: { value: 1.35 },
+      uPixelRatio: { value: this.currentPixelRatio },
       uCoreColor: { value: this.activeValues.colorCore }
     };
 
@@ -306,7 +349,7 @@ export class AIOrb {
     this.dustUniforms = {
       uTime: { value: 0.0 },
       uAudioIntensity: { value: 0.0 },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) }
+      uPixelRatio: { value: this.currentPixelRatio }
     };
 
     const material = new THREE.ShaderMaterial({
@@ -322,7 +365,53 @@ export class AIOrb {
     this.orbGroup.add(this.dustMesh);
   }
 
-  // Interactive mouse/touch tracking and dragging
+  // Update uniform pixel ratios across all particle shaders
+  updateUniformPixelRatios(pr) {
+    if (this.waveSphereUniforms) this.waveSphereUniforms.uPixelRatio.value = pr;
+    if (this.innerCoreUniforms) this.innerCoreUniforms.uPixelRatio.value = pr;
+    if (this.dustUniforms) this.dustUniforms.uPixelRatio.value = pr;
+  }
+
+  // Device Orientation (Gyroscope / Tilt)
+  initGyroscope() {
+    this.onDeviceOrientation = (e) => {
+      if (e.beta === null || e.gamma === null) return;
+      this.gyro.available = true;
+
+      // gamma: left-to-right tilt in [-90, 90]
+      // beta: front-to-back tilt in [-180, 180] (typical handheld phone angle is ~45-50 degrees)
+      const gammaClamped = THREE.MathUtils.clamp(e.gamma, -45, 45);
+      const betaClamped = THREE.MathUtils.clamp(e.beta - 45, -45, 45);
+
+      this.gyro.targetX = (gammaClamped / 45) * 0.45;
+      this.gyro.targetY = (betaClamped / 45) * 0.45;
+    };
+
+    if (typeof window !== 'undefined' && 'ondeviceorientation' in window) {
+      window.addEventListener('deviceorientation', this.onDeviceOrientation, { passive: true });
+    }
+  }
+
+  // Request Gyroscope Permission (Required by iOS 13+ Safari on first interaction)
+  requestGyroPermission() {
+    if (this.gyro.permissionRequested) return;
+    this.gyro.permissionRequested = true;
+
+    if (
+      typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function'
+    ) {
+      DeviceOrientationEvent.requestPermission()
+        .then((state) => {
+          if (state === 'granted') {
+            window.addEventListener('deviceorientation', this.onDeviceOrientation, { passive: true });
+          }
+        })
+        .catch(() => {});
+    }
+  }
+
+  // Interactive mouse/touch tracking, pinch-to-zoom, and inertia flick physics
   initEventListeners() {
     this.onResize = () => {
       const width = this.container.clientWidth || window.innerWidth;
@@ -331,46 +420,126 @@ export class AIOrb {
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
 
+      this.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2.0);
+      this.currentPixelRatio = this.maxPixelRatio;
       this.renderer.setSize(width, height);
-      const pr = Math.min(window.devicePixelRatio, 2);
-      this.renderer.setPixelRatio(pr);
-      if (this.waveSphereUniforms) this.waveSphereUniforms.uPixelRatio.value = pr;
-      if (this.innerCoreUniforms) this.innerCoreUniforms.uPixelRatio.value = pr;
-      if (this.dustUniforms) this.dustUniforms.uPixelRatio.value = pr;
+      this.renderer.setPixelRatio(this.currentPixelRatio);
+      this.updateUniformPixelRatios(this.currentPixelRatio);
     };
     window.addEventListener('resize', this.onResize);
 
+    // Wheel zoom on desktop trackpad / mouse wheel
+    this.onWheel = (e) => {
+      const zoomDelta = e.deltaY * 0.004;
+      this.targetCameraDistance = THREE.MathUtils.clamp(
+        this.targetCameraDistance + zoomDelta,
+        this.minCameraDist,
+        this.maxCameraDist
+      );
+    };
+    this.container.addEventListener('wheel', this.onWheel, { passive: true });
+
+    // Pointer move handler (mouse & touch)
     const onPointerMove = (e) => {
-      const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-      const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+      const isTouch = e.touches && e.touches.length > 0;
+
+      // Handle multi-touch pinch-to-zoom
+      if (isTouch && e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+        if (this.pinch.active) {
+          const deltaDist = dist - this.pinch.lastDist;
+          this.targetCameraDistance = THREE.MathUtils.clamp(
+            this.targetCameraDistance - deltaDist * 0.015,
+            this.minCameraDist,
+            this.maxCameraDist
+          );
+        } else {
+          this.pinch.active = true;
+        }
+        this.pinch.lastDist = dist;
+        return;
+      }
+
+      this.pinch.active = false;
+
+      const clientX = isTouch ? e.touches[0].clientX : e.clientX;
+      const clientY = isTouch ? e.touches[0].clientY : e.clientY;
 
       this.mouse.targetX = (clientX / window.innerWidth) * 2 - 1;
       this.mouse.targetY = -(clientY / window.innerHeight) * 2 + 1;
 
       if (this.isDragging) {
-        const deltaX = clientX - this.previousMousePosition.x;
-        const deltaY = clientY - this.previousMousePosition.y;
+        const now = performance.now();
+        const dt = Math.max(1, now - this.lastPointerMoveTime);
 
-        this.dragRotation.y += deltaX * 0.005;
-        this.dragRotation.x += deltaY * 0.005;
+        const deltaX = clientX - this.previousPointerPos.x;
+        const deltaY = clientY - this.previousPointerPos.y;
 
-        this.previousMousePosition = { x: clientX, y: clientY };
+        // Direct 1:1 rotation tracking
+        this.waveSphereMesh.rotation.y += deltaX * 0.005;
+        this.waveSphereMesh.rotation.x += deltaY * 0.005;
+
+        // Calculate velocity for silky inertia release flick
+        this.pointerVelocity.x = (deltaX / dt) * 16.0;
+        this.pointerVelocity.y = (deltaY / dt) * 16.0;
+
+        this.previousPointerPos = { x: clientX, y: clientY };
+        this.lastPointerMoveTime = now;
       }
     };
 
+    // Pointer down handler
     const onPointerDown = (e) => {
       if (e.target.closest('#app-overlay') && !e.target.closest('#canvas-container')) {
         return;
       }
+
+      // Request Gyroscope permission on mobile interaction
+      this.requestGyroPermission();
+
+      // Tactile click haptic feedback on touch
+      this.triggerHaptic(12);
+
+      // Double tap detection for shockwave ripple
+      const now = Date.now();
+      if (now - this.lastTapTime < 320) {
+        this.triggerShockwave();
+        this.triggerHaptic([15, 30, 20]);
+      }
+      this.lastTapTime = now;
+
       this.isDragging = true;
-      const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-      const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-      this.previousMousePosition = { x: clientX, y: clientY };
-      this.triggerShockwave();
+      this.inertiaVelocity = { x: 0, y: 0 };
+
+      const isTouch = e.touches && e.touches.length > 0;
+      const clientX = isTouch ? e.touches[0].clientX : e.clientX;
+      const clientY = isTouch ? e.touches[0].clientY : e.clientY;
+
+      this.previousPointerPos = { x: clientX, y: clientY };
+      this.pointerVelocity = { x: 0, y: 0 };
+      this.lastPointerMoveTime = performance.now();
+
+      if (isTouch && e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        this.pinch.active = true;
+        this.pinch.lastDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      }
     };
 
+    // Pointer up handler (transfers velocity into celestial inertia flick)
     const onPointerUp = () => {
-      this.isDragging = false;
+      if (this.isDragging) {
+        this.isDragging = false;
+        // Transfer release flick momentum into inertia velocity
+        const flickX = THREE.MathUtils.clamp(this.pointerVelocity.y * 0.0028, -0.15, 0.15);
+        const flickY = THREE.MathUtils.clamp(this.pointerVelocity.x * 0.0028, -0.15, 0.15);
+        this.inertiaVelocity = { x: flickX, y: flickY };
+      }
+      this.pinch.active = false;
     };
 
     window.addEventListener('mousemove', onPointerMove, { passive: true });
@@ -379,19 +548,24 @@ export class AIOrb {
     window.addEventListener('touchstart', onPointerDown, { passive: true });
     window.addEventListener('mouseup', onPointerUp);
     window.addEventListener('touchend', onPointerUp);
+    window.addEventListener('touchcancel', onPointerUp);
   }
 
-  // Trigger an acoustic shockwave ripple through the particle lattice
+  // Trigger an acoustic shockwave ripple through the particle lattice + tactile thump
   triggerShockwave() {
     this.shockwave = 1.0;
+    this.triggerHaptic([20, 40]);
   }
 
   // State transitions: idle, listening, thinking, speaking
   setState(stateName) {
     if (!STATE_PROFILES[stateName]) return;
+    if (this.currentState !== stateName) {
+      this.triggerHaptic([20, 40]);
+    }
     this.currentState = stateName;
     this.targetProfile = { ...STATE_PROFILES[stateName] };
-    this.triggerShockwave();
+    this.shockwave = 0.85;
   }
 
   // Ingest real-time audio metrics from Web Audio API Analyser
@@ -401,15 +575,38 @@ export class AIOrb {
     this.audioTreble = treble;
   }
 
-  // Animation Loop
+  // Animation Loop & Real-Time Physics Integrator
   animate = () => {
     requestAnimationFrame(this.animate);
 
     const delta = this.clock.getDelta();
     const elapsedTime = this.clock.getElapsedTime();
+    const now = performance.now();
 
-    // Smooth profile interpolation
-    const lerpSpeed = 0.06;
+    // 1. Dynamic FPS & Adaptive Resolution Check (Runs every 60 frames)
+    this.fpsFrameCount++;
+    if (this.fpsFrameCount % 60 === 0) {
+      const elapsedSec = (now - this.lastFpsTimestamp) / 1000;
+      const currentFps = 60 / Math.max(0.001, elapsedSec);
+      this.lastFpsTimestamp = now;
+
+      // Adaptively step down resolution if FPS dips under 42 (e.g. thermal throttling)
+      if (currentFps < 42 && this.currentPixelRatio > 1.0) {
+        this.currentPixelRatio = Math.max(1.0, this.currentPixelRatio - 0.25);
+        this.renderer.setPixelRatio(this.currentPixelRatio);
+        this.updateUniformPixelRatios(this.currentPixelRatio);
+      } else if (currentFps > 58 && this.currentPixelRatio < this.maxPixelRatio) {
+        this.currentPixelRatio = Math.min(this.maxPixelRatio, this.currentPixelRatio + 0.25);
+        this.renderer.setPixelRatio(this.currentPixelRatio);
+        this.updateUniformPixelRatios(this.currentPixelRatio);
+      }
+    }
+
+    // 2. Camera Distance Smooth Lerping (Pinch / Wheel Zoom)
+    this.camera.position.z += (this.targetCameraDistance - this.camera.position.z) * 0.08;
+
+    // 3. Smooth Profile Interpolation
+    const lerpSpeed = 0.065;
     this.activeValues.colorBase.lerp(this.targetProfile.colorBase, lerpSpeed);
     this.activeValues.colorA.lerp(this.targetProfile.colorA, lerpSpeed);
     this.activeValues.colorB.lerp(this.targetProfile.colorB, lerpSpeed);
@@ -442,24 +639,24 @@ export class AIOrb {
       lerpSpeed
     );
 
-    // Smooth audio reactivity to prevent visual jitter
-    const audioDamp = 0.15;
+    // 4. Smooth Audio Reactivity
+    const audioDamp = 0.16;
     this.smoothAudio.intensity = THREE.MathUtils.lerp(this.smoothAudio.intensity, this.audioIntensity, audioDamp);
     this.smoothAudio.bass = THREE.MathUtils.lerp(this.smoothAudio.bass, this.audioBass, audioDamp);
     this.smoothAudio.treble = THREE.MathUtils.lerp(this.smoothAudio.treble, this.audioTreble, audioDamp);
 
-    // Shockwave decay
+    // 5. Shockwave Decay
     if (this.shockwave > 0.001) {
-      this.shockwave *= 0.92;
+      this.shockwave *= 0.93;
     } else {
       this.shockwave = 0.0;
     }
 
-    // Breathing motion when idle
+    // Organic breathing motion when idle
     const breathing = Math.sin(elapsedTime * 1.6) * 0.035;
     const finalDisplacement = this.activeValues.displacementAmp + breathing + this.shockwave * 0.35;
 
-    // Update Primary Wave Sphere Uniforms
+    // 6. Update Primary Wave Sphere Uniforms
     this.waveSphereUniforms.uTime.value = elapsedTime;
     this.waveSphereUniforms.uAudioIntensity.value = this.smoothAudio.intensity;
     this.waveSphereUniforms.uAudioBass.value = this.smoothAudio.bass;
@@ -468,41 +665,52 @@ export class AIOrb {
     this.waveSphereUniforms.uNoiseFreq.value = this.activeValues.noiseFreq;
     this.waveSphereUniforms.uNoiseSpeed.value = this.activeValues.noiseSpeed;
     this.waveSphereUniforms.uPointSize.value = this.activeValues.pointSize;
-    this.waveSphereUniforms.uStatePulse.value = (this.currentState === 'listening' || this.currentState === 'thinking') ? 1.0 : 0.0;
+    this.waveSphereUniforms.uStatePulse.value =
+      (this.currentState === 'listening' || this.currentState === 'thinking') ? 1.0 : 0.0;
 
-    // Update Inner Core Uniforms
+    // 7. Update Inner Core Uniforms
     this.innerCoreUniforms.uTime.value = elapsedTime;
     this.innerCoreUniforms.uAudioBass.value = this.smoothAudio.bass;
     this.innerCoreUniforms.uAudioIntensity.value = this.smoothAudio.intensity;
 
-    // Update Dust Uniforms
+    // 8. Update Dust Uniforms
     this.dustUniforms.uTime.value = elapsedTime;
     this.dustUniforms.uAudioIntensity.value = this.smoothAudio.intensity;
 
-    // Mouse parallax tracking
-    this.mouse.x += (this.mouse.targetX - this.mouse.x) * 0.04;
-    this.mouse.y += (this.mouse.targetY - this.mouse.y) * 0.04;
+    // 9. Mouse Parallax & Gyroscope Inertia Damping
+    this.mouse.x += (this.mouse.targetX - this.mouse.x) * 0.045;
+    this.mouse.y += (this.mouse.targetY - this.mouse.y) * 0.045;
 
-    // Autonomous organic rotation + user drag inertia
-    this.dragRotation.x *= 0.94;
-    this.dragRotation.y *= 0.94;
+    const gyroDamp = 0.05;
+    this.gyro.currentX += (this.gyro.targetX - this.gyro.currentX) * gyroDamp;
+    this.gyro.currentY += (this.gyro.targetY - this.gyro.currentY) * gyroDamp;
+
+    // Combine Mouse Parallax and Gyroscope tilt on orb group
+    this.orbGroup.rotation.y = this.mouse.x * 0.28 + this.gyro.currentX;
+    this.orbGroup.rotation.x = -this.mouse.y * 0.28 + this.gyro.currentY;
+
+    // 10. Autonomous Rotation + Friction-Damped Momentum Flick
+    this.inertiaVelocity.x *= 0.94;
+    this.inertiaVelocity.y *= 0.94;
 
     const baseRotation = this.activeValues.rotationSpeed * delta;
-    this.waveSphereMesh.rotation.y += baseRotation * 0.7 + this.dragRotation.y;
-    this.waveSphereMesh.rotation.x += baseRotation * 0.25 + this.dragRotation.x;
+    this.waveSphereMesh.rotation.y += baseRotation * 0.7 + this.inertiaVelocity.y;
+    this.waveSphereMesh.rotation.x += baseRotation * 0.25 + this.inertiaVelocity.x;
 
     this.innerCoreMesh.rotation.y -= baseRotation * 1.1;
     this.innerCoreMesh.rotation.z += baseRotation * 0.4;
-
-    // Parallax tilt on the group
-    this.orbGroup.rotation.y = this.mouse.x * 0.32;
-    this.orbGroup.rotation.x = -this.mouse.y * 0.32;
 
     this.renderer.render(this.scene, this.camera);
   };
 
   dispose() {
     window.removeEventListener('resize', this.onResize);
+    if (this.onDeviceOrientation) {
+      window.removeEventListener('deviceorientation', this.onDeviceOrientation);
+    }
+    if (this.onWheel) {
+      this.container.removeEventListener('wheel', this.onWheel);
+    }
     this.renderer.dispose();
   }
 }
