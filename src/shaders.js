@@ -1,7 +1,7 @@
 // src/shaders.js
-// Custom GLSL Shaders for 3D AI Orb, Inner Core, Atmosphere, and Particle Field
+// Custom GPU Shaders for 3D Particle Wave AI Orb (Magnific / Freepik Starlight Particle Sphere)
 
-// 3D Simplex Noise GLSL implementation (Ashima / Stefan Gustavson)
+// 3D Simplex Noise GLSL implementation (Stefan Gustavson / Ashima Arts)
 export const simplexNoiseGLSL = /* glsl */ `
 vec4 permute(vec4 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
 vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
@@ -65,234 +65,175 @@ float snoise(vec3 v) {
   m = m * m;
   return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
-
-// 3-Octave Fractal Brownian Motion
-float fbm(vec3 p, float freq, float speed, float time) {
-  float v = 0.0;
-  float a = 0.55;
-  vec3 shift = vec3(100.0);
-  for (int i = 0; i < 3; ++i) {
-    v += a * snoise(p * freq + vec3(time * speed));
-    p = p * 2.0 + shift;
-    a *= 0.5;
-  }
-  return v;
-}
 `;
 
-// Orb Vertex Shader
-export const orbVertexShader = /* glsl */ `
+// Primary Particle Wave Sphere Vertex Shader
+export const particleWaveSphereVertexShader = /* glsl */ `
 ${simplexNoiseGLSL}
 
 uniform float uTime;
 uniform float uAudioIntensity;
 uniform float uAudioBass;
-uniform float uAudioHigh;
+uniform float uAudioTreble;
 uniform float uDisplacementAmp;
 uniform float uNoiseFreq;
 uniform float uNoiseSpeed;
-uniform float uStatePulse;
+uniform float uPointSize;
+uniform float uPixelRatio;
 
-varying vec3 vNormal;
-varying vec3 vWorldNormal;
-varying vec3 vViewPosition;
-varying vec3 vWorldPosition;
-varying float vDisplacement;
-varying float vNoise;
-
-// Helper to get displacement at a given surface point
-float getDisplacement(vec3 p, vec3 norm) {
-  float baseNoise = fbm(p, uNoiseFreq, uNoiseSpeed, uTime);
-  float highDetail = snoise(p * (uNoiseFreq * 2.8) - vec3(uTime * (uNoiseSpeed * 1.5))) * 0.35;
-  
-  // Audio deformation: bass inflates, mid/high creates ripples
-  float audioRipples = sin(p.y * 6.0 + uTime * 4.0) * cos(p.x * 6.0 + uTime * 3.0) * (uAudioHigh * 0.35);
-  float bassPunch = uAudioBass * 0.45;
-  
-  float disp = (baseNoise + highDetail + audioRipples) * (uDisplacementAmp + bassPunch * 0.5);
-  disp += uStatePulse * 0.15 * sin(uTime * 3.0 + p.y * 4.0);
-  return disp;
-}
-
-void main() {
-  vec3 p = position;
-  float disp = getDisplacement(p, normal);
-  
-  // Finite difference to calculate accurate displaced normal
-  float eps = 0.02;
-  vec3 tangent = normalize(abs(normal.y) < 0.99 ? cross(normal, vec3(0.0, 1.0, 0.0)) : cross(normal, vec3(1.0, 0.0, 0.0)));
-  vec3 bitangent = cross(normal, tangent);
-  
-  vec3 pTangent = p + tangent * eps;
-  vec3 pBitangent = p + bitangent * eps;
-  
-  float dispT = getDisplacement(pTangent, normal);
-  float dispB = getDisplacement(pBitangent, normal);
-  
-  vec3 posDisplaced = p + normal * disp;
-  vec3 posTDisplaced = pTangent + normal * dispT;
-  vec3 posBDisplaced = pBitangent + normal * dispB;
-  
-  vec3 computedNormal = normalize(cross(posTDisplaced - posDisplaced, posBDisplaced - posDisplaced));
-  
-  vNormal = normalMatrix * computedNormal;
-  vWorldNormal = normalize(mat3(modelMatrix) * computedNormal);
-  
-  vDisplacement = disp;
-  vNoise = getDisplacement(p, normal);
-
-  vec4 worldPos = modelMatrix * vec4(posDisplaced, 1.0);
-  vWorldPosition = worldPos.xyz;
-  
-  vec4 mvPosition = viewMatrix * worldPos;
-  vViewPosition = -mvPosition.xyz;
-  
-  gl_Position = projectionMatrix * mvPosition;
-}
-`;
-
-// Orb Fragment Shader
-export const orbFragmentShader = /* glsl */ `
-uniform float uTime;
-uniform float uAudioIntensity;
-uniform float uAudioBass;
-uniform float uAudioTreble;
 uniform vec3 uColorBase;
 uniform vec3 uColorA;
 uniform vec3 uColorB;
 uniform vec3 uColorC;
-uniform vec3 uColorCore;
-uniform float uFresnelPower;
-uniform float uRoughness;
+uniform float uStatePulse;
 
-varying vec3 vNormal;
-varying vec3 vWorldNormal;
-varying vec3 vViewPosition;
-varying vec3 vWorldPosition;
-varying float vDisplacement;
-varying float vNoise;
+attribute float aScale;
+attribute float aRandom;
 
-void main() {
-  vec3 normal = normalize(vNormal);
-  vec3 viewDir = normalize(vViewPosition);
-
-  // Fresnel effect (outer rim glow)
-  float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), uFresnelPower);
-  
-  // Grazing angle iridescence / chromatic shift
-  vec3 iridCycle = 0.5 + 0.5 * cos(6.28318 * (fresnel * 1.2 + vec3(0.0, 0.33, 0.67) + uTime * 0.08));
-  
-  // Height/Displacement gradient mapping
-  float normDisp = clamp(vDisplacement * 1.5 + 0.5, 0.0, 1.0);
-  
-  // Color palette interpolation
-  vec3 surfaceColor = mix(uColorBase, uColorA, smoothstep(0.1, 0.55, normDisp));
-  surfaceColor = mix(surfaceColor, uColorB, smoothstep(0.45, 0.85, normDisp));
-  surfaceColor = mix(surfaceColor, uColorC, smoothstep(0.75, 1.1, normDisp + uAudioIntensity * 0.4));
-  
-  // Add iridescent rim shift
-  surfaceColor = mix(surfaceColor, iridCycle * uColorB, fresnel * 0.65);
-  
-  // Deep pulsating core emission shining through translucent skin
-  float corePulse = (1.0 - length(vDisplacement)) * 0.7 + (uAudioBass * 0.8);
-  vec3 innerGlow = uColorCore * clamp(corePulse, 0.0, 1.5);
-  
-  // Specular highlights (pseudo-Blinn-Phong)
-  vec3 lightDir1 = normalize(vec3(1.5, 2.0, 3.0));
-  vec3 halfDir1 = normalize(lightDir1 + viewDir);
-  float spec1 = pow(max(dot(normal, halfDir1), 0.0), 32.0 / uRoughness) * 0.8;
-  
-  vec3 lightDir2 = normalize(vec3(-2.0, -1.0, 2.0));
-  vec3 halfDir2 = normalize(lightDir2 + viewDir);
-  float spec2 = pow(max(dot(normal, halfDir2), 0.0), 16.0 / uRoughness) * 0.4;
-  
-  vec3 specular = (vec3(1.0, 1.0, 1.0) * spec1 + uColorA * spec2) * (1.0 + uAudioTreble * 1.2);
-
-  // Atmospheric rim glow boost
-  vec3 rimGlow = uColorB * pow(fresnel, 2.2) * (1.6 + uAudioIntensity * 2.0);
-
-  // Final composition
-  vec3 finalColor = surfaceColor * 0.65 + innerGlow * 0.45 + specular + rimGlow;
-  
-  // Output with subtle alpha for outer rim blending
-  float alpha = clamp(0.92 + fresnel * 0.08, 0.0, 1.0);
-  gl_FragColor = vec4(finalColor, alpha);
-}
-`;
-
-// Inner Core Shaders (Additive glowing central plasma star)
-export const coreVertexShader = /* glsl */ `
-varying vec3 vNormal;
-varying vec3 vViewPosition;
+varying vec3 vColor;
+varying float vAlpha;
+varying float vRim;
+varying float vDisp;
 
 void main() {
-  vNormal = normalize(normalMatrix * normal);
-  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  vViewPosition = -mvPosition.xyz;
+  vec3 p = position;
+  vec3 n = normalize(position);
+  
+  float t = uTime * uNoiseSpeed;
+  
+  // 3-octave harmonic fluid noise waves for liquid organic motion
+  float w1 = snoise(p * uNoiseFreq + vec3(t * 0.7, t * 0.5, t * 0.8));
+  float w2 = snoise(p * (uNoiseFreq * 2.3) - vec3(t * 0.9, -t * 0.7, t * 1.1)) * 0.45;
+  float w3 = snoise(p * (uNoiseFreq * 4.2) + vec3(t * 1.4)) * 0.22;
+  
+  // Dynamic audio reactivity: bass inflates, mid/high frequencies create ripples
+  float audioDisp = (uAudioBass * 0.65 + uAudioIntensity * 0.45) * snoise(p * 3.2 + vec3(uTime * 3.0));
+  float audioRipples = sin(p.y * 14.0 + uTime * 6.0) * (uAudioTreble * 0.22);
+  
+  float disp = (w1 + w2 + w3) * uDisplacementAmp + audioDisp * 0.38 + audioRipples;
+  disp += uStatePulse * 0.2 * sin(uTime * 4.0 + p.y * 5.0);
+  
+  // Displace along surface normal
+  vec3 displaced = p + n * disp;
+  
+  // Organic tangential swirl around the polar axis
+  float swirl = (w1 * 0.08 + audioDisp * 0.06);
+  displaced.x += -p.z * swirl;
+  displaced.z += p.x * swirl;
+
+  vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
   gl_Position = projectionMatrix * mvPosition;
+  
+  // View vector & normal for rim calculation
+  vec3 viewDir = normalize(-mvPosition.xyz);
+  vec3 transformedNormal = normalize(normalMatrix * n);
+  float rim = 1.0 - abs(dot(transformedNormal, viewDir));
+  rim = pow(clamp(rim, 0.0, 1.0), 1.3);
+  
+  // Distance-based particle size attenuation
+  float viewDist = max(0.1, -mvPosition.z);
+  float size = (uPointSize * uPixelRatio * 260.0) / viewDist;
+  
+  // Particles on the outer silhouette are denser and slightly larger, creating the distinctive wavy halo from the reference image
+  gl_PointSize = clamp(size * (aScale * 0.82 + rim * 0.6 + disp * 0.35), 1.0, 22.0);
+  
+  // Reference Image Color Palette:
+  // Predominantly luminous starlight white/platinum with subtle chromatic highlights
+  vec3 starlight = vec3(0.96, 0.98, 1.0);
+  
+  // Chromatic accent sheen on wave crests and silhouette rim
+  vec3 chromatic = mix(uColorA, uColorB, clamp(disp * 1.5 + 0.5, 0.0, 1.0));
+  chromatic = mix(chromatic, uColorC, rim * 0.7);
+  
+  vec3 finalColor = mix(starlight, chromatic, 0.18 + rim * 0.32 + uAudioIntensity * 0.42);
+  
+  vColor = finalColor;
+  vRim = rim;
+  vDisp = disp;
+  vAlpha = clamp(0.55 + rim * 0.45 + disp * 0.3 + uAudioIntensity * 0.35, 0.25, 1.0);
 }
 `;
 
-export const coreFragmentShader = /* glsl */ `
+// Primary Particle Wave Sphere Fragment Shader
+export const particleWaveSphereFragmentShader = /* glsl */ `
+varying vec3 vColor;
+varying float vAlpha;
+varying float vRim;
+varying float vDisp;
+
+void main() {
+  vec2 coord = gl_PointCoord - vec2(0.5);
+  float dist = length(coord);
+  if (dist > 0.5) discard;
+  
+  // Crisp starlight core with radiant falloff
+  float core = smoothstep(0.18, 0.0, dist);
+  float softGlow = smoothstep(0.5, 0.02, dist);
+  
+  float alpha = (core * 0.75 + softGlow * 0.35) * vAlpha;
+  
+  // Brilliant glowing center for each starlight dot
+  vec3 col = vColor + vec3(core * 0.55);
+  
+  gl_FragColor = vec4(col, alpha);
+}
+`;
+
+// Inner Dense Point Core Vertex Shader
+export const innerPointCoreVertexShader = /* glsl */ `
+${simplexNoiseGLSL}
+
 uniform float uTime;
 uniform float uAudioBass;
 uniform float uAudioIntensity;
+uniform float uPointSize;
+uniform float uPixelRatio;
 uniform vec3 uCoreColor;
 
-varying vec3 vNormal;
-varying vec3 vViewPosition;
+attribute float aScale;
+
+varying vec3 vColor;
+varying float vAlpha;
 
 void main() {
-  vec3 normal = normalize(vNormal);
-  vec3 viewDir = normalize(vViewPosition);
+  vec3 p = position;
+  vec3 n = normalize(position);
   
-  // Inverted center glow: strongest at the center, softer at the edge
-  float centerIntensity = max(dot(normal, viewDir), 0.0);
-  float glow = pow(centerIntensity, 1.8) * (1.2 + uAudioBass * 1.5 + sin(uTime * 4.0) * 0.15);
+  float t = uTime * 0.35;
+  float wave = snoise(p * 1.8 + vec3(t));
+  float bassPunch = uAudioBass * 0.35;
   
-  vec3 color = uCoreColor * glow * 1.5;
-  gl_FragColor = vec4(color, clamp(glow * 0.9, 0.0, 1.0));
-}
-`;
-
-// Atmospheric Halo / Corona Shaders
-export const haloVertexShader = /* glsl */ `
-varying vec3 vNormal;
-varying vec3 vViewPosition;
-
-void main() {
-  vNormal = normalize(normalMatrix * normal);
-  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  vViewPosition = -mvPosition.xyz;
+  vec3 displaced = p + n * (wave * 0.12 + bassPunch);
+  
+  vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
   gl_Position = projectionMatrix * mvPosition;
+  
+  float viewDist = max(0.1, -mvPosition.z);
+  gl_PointSize = clamp((uPointSize * uPixelRatio * 180.0) / viewDist * aScale, 1.0, 14.0);
+  
+  vec3 coreWhite = vec3(0.92, 0.96, 1.0);
+  vColor = mix(coreWhite, uCoreColor, 0.4 + uAudioBass * 0.4);
+  vAlpha = clamp(0.4 + 0.5 * abs(wave) + uAudioIntensity * 0.4, 0.2, 0.95);
 }
 `;
 
-export const haloFragmentShader = /* glsl */ `
-uniform float uTime;
-uniform float uAudioIntensity;
-uniform vec3 uHaloColor;
-
-varying vec3 vNormal;
-varying vec3 vViewPosition;
+// Inner Dense Point Core Fragment Shader
+export const innerPointCoreFragmentShader = /* glsl */ `
+varying vec3 vColor;
+varying float vAlpha;
 
 void main() {
-  vec3 normal = normalize(vNormal);
-  vec3 viewDir = normalize(vViewPosition);
+  vec2 coord = gl_PointCoord - vec2(0.5);
+  float dist = length(coord);
+  if (dist > 0.5) discard;
   
-  // Soft outer atmospheric rim glow
-  float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.5);
-  float pulse = 1.0 + 0.3 * sin(uTime * 2.0) + uAudioIntensity * 1.2;
-  
-  vec3 color = uHaloColor * fresnel * pulse * 1.3;
-  float alpha = smoothstep(0.0, 0.9, fresnel) * 0.65;
-  
-  gl_FragColor = vec4(color, alpha);
+  float glow = smoothstep(0.5, 0.05, dist);
+  gl_FragColor = vec4(vColor, glow * vAlpha * 0.7);
 }
 `;
 
-// Starfield / Orbiting Particle Shader
-export const particleVertexShader = /* glsl */ `
+// Ambient Star Dust / Orbiting Motes Vertex Shader
+export const outerDustVertexShader = /* glsl */ `
 uniform float uTime;
 uniform float uAudioIntensity;
 uniform float uPixelRatio;
@@ -308,41 +249,34 @@ varying float vAlpha;
 void main() {
   vColor = aColor;
   
-  // Spiral orbital rotation around Y and X axes
-  float angle = uTime * aSpeed * 0.4 + aPhase;
+  float angle = uTime * aSpeed * 0.3 + aPhase;
   float r = length(position.xz);
   
   vec3 transformed = position;
   transformed.x = cos(angle) * r;
   transformed.z = sin(angle) * r;
+  transformed.y += sin(uTime * 0.6 + aPhase) * 0.22;
   
-  // Float up/down organically
-  transformed.y += sin(uTime * 0.8 + aPhase) * 0.25;
-  
-  // Audio expansion push
-  transformed += normalize(transformed) * (uAudioIntensity * 0.45);
+  transformed += normalize(transformed) * (uAudioIntensity * 0.35);
   
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
-  
-  // Attenuate point size by distance to camera
-  gl_PointSize = aSize * (1.0 + uAudioIntensity * 1.0) * (300.0 / -mvPosition.z) * uPixelRatio;
+  gl_PointSize = aSize * (260.0 / -mvPosition.z) * uPixelRatio;
   gl_Position = projectionMatrix * mvPosition;
   
-  vAlpha = clamp(0.3 + 0.7 * sin(uTime * 2.0 + aPhase), 0.2, 1.0);
+  vAlpha = clamp(0.3 + 0.6 * sin(uTime * 1.8 + aPhase), 0.15, 0.9);
 }
 `;
 
-export const particleFragmentShader = /* glsl */ `
+export const outerDustFragmentShader = /* glsl */ `
 varying vec3 vColor;
 varying float vAlpha;
 
 void main() {
-  // Soft circular point sprite
   vec2 coord = gl_PointCoord - vec2(0.5);
   float dist = length(coord);
   if (dist > 0.5) discard;
   
   float glow = smoothstep(0.5, 0.0, dist);
-  gl_FragColor = vec4(vColor, glow * vAlpha * 0.85);
+  gl_FragColor = vec4(vColor, glow * vAlpha * 0.8);
 }
 `;
