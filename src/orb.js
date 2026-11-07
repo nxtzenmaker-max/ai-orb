@@ -7,7 +7,9 @@ import {
   innerPointCoreVertexShader,
   innerPointCoreFragmentShader,
   outerDustVertexShader,
-  outerDustFragmentShader
+  outerDustFragmentShader,
+  shockwaveRingVertexShader,
+  shockwaveRingFragmentShader
 } from './shaders.js';
 
 // Color themes and animation profiles for each orb state
@@ -120,6 +122,12 @@ export class AIOrb {
     this.lastTapTime = 0;
     this.shockwave = 0.0;
 
+    // Luminous 3D Expanding Shockwave Rings & Physical Surface Ripple
+    this.shockwaveRings = [];
+    this.shockwaveProgress = 0.0;
+    this.shockwaveIntensity = 0.0;
+    this.shockwaveOrigin = new THREE.Vector3(0, 0, 1);
+
     // Multi-touch Pinch Tracking
     this.pinch = {
       active: false,
@@ -132,6 +140,7 @@ export class AIOrb {
     this.initParticleWaveSphere();
     this.initInnerPointCore();
     this.initOuterDust();
+    this.initShockwaveRings();
     this.initGyroscope();
     this.initEventListeners();
     this.animate();
@@ -238,7 +247,10 @@ export class AIOrb {
       uColorA: { value: this.activeValues.colorA },
       uColorB: { value: this.activeValues.colorB },
       uColorC: { value: this.activeValues.colorC },
-      uStatePulse: { value: 0.0 }
+      uStatePulse: { value: 0.0 },
+      uShockwaveProgress: { value: 0.0 },
+      uShockwaveIntensity: { value: 0.0 },
+      uShockwaveOrigin: { value: this.shockwaveOrigin }
     };
 
     this.waveSphereMaterial = new THREE.ShaderMaterial({
@@ -363,6 +375,89 @@ export class AIOrb {
 
     this.dustMesh = new THREE.Points(geometry, material);
     this.orbGroup.add(this.dustMesh);
+  }
+
+  // 4. Luminous Expanding 3D Shockwave Rings (Annular wavefront ripples)
+  initShockwaveRings() {
+    this.shockwaveGroup = new THREE.Group();
+    this.scene.add(this.shockwaveGroup);
+
+    const quadGeom = new THREE.PlaneGeometry(1.0, 1.0);
+
+    for (let i = 0; i < 6; i++) {
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: shockwaveRingVertexShader,
+        fragmentShader: shockwaveRingFragmentShader,
+        uniforms: {
+          uRadius: { value: 0.1 },
+          uOpacity: { value: 0.0 },
+          uColor: { value: new THREE.Color('#00f0ff') }
+        },
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+
+      const mesh = new THREE.Mesh(quadGeom, mat);
+      mesh.visible = false;
+      this.shockwaveGroup.add(mesh);
+
+      this.shockwaveRings.push({
+        mesh,
+        material: mat,
+        active: false,
+        progress: 0.0,
+        speed: 1.35,
+        maxRadius: 8.8
+      });
+    }
+  }
+
+  // Spawn an expanding 3D Shockwave Ring wavefront
+  spawnShockwaveRing(position, color) {
+    const ring = this.shockwaveRings.find(r => !r.active) || this.shockwaveRings[0];
+    ring.active = true;
+    ring.progress = 0.0;
+    ring.speed = 1.35;
+    ring.mesh.visible = true;
+
+    if (position) {
+      ring.mesh.position.copy(position);
+    } else {
+      ring.mesh.position.set(0, 0, 0);
+    }
+
+    // Always orient ring plane parallel to camera viewport for cinematic projection
+    ring.mesh.quaternion.copy(this.camera.quaternion);
+
+    const ringColor = color || this.activeValues.colorA;
+    ring.material.uniforms.uColor.value.copy(ringColor);
+    ring.material.uniforms.uRadius.value = 0.2;
+    ring.material.uniforms.uOpacity.value = 0.95;
+  }
+
+  // Screen-space pointer click burst ripple VFX
+  spawnClickBurstRipple(clientX, clientY) {
+    if (!clientX && !clientY) return;
+    const ripple = document.createElement('div');
+    ripple.className = 'click-shockwave-ring';
+    ripple.style.left = `${clientX}px`;
+    ripple.style.top = `${clientY}px`;
+
+    const stateColors = {
+      idle: '#00f0ff',
+      listening: '#00f5d4',
+      thinking: '#a855f7',
+      speaking: '#f59e0b'
+    };
+    const col = stateColors[this.currentState] || '#00f0ff';
+    ripple.style.setProperty('--shock-color', col);
+
+    document.body.appendChild(ripple);
+    setTimeout(() => {
+      ripple.remove();
+    }, 720);
   }
 
   // Update uniform pixel ratios across all particle shaders
@@ -503,20 +598,30 @@ export class AIOrb {
       // Tactile click haptic feedback on touch
       this.triggerHaptic(12);
 
-      // Double tap detection for shockwave ripple
+      const isTouch = e.touches && e.touches.length > 0;
+      const clientX = isTouch ? e.touches[0].clientX : e.clientX;
+      const clientY = isTouch ? e.touches[0].clientY : e.clientY;
+
+      // Project pointer to 3D sphere surface normal for spherical shockwave ripple
+      const ndcX = (clientX / window.innerWidth) * 2 - 1;
+      const ndcY = -(clientY / window.innerHeight) * 2 + 1;
+      const radSq = ndcX * ndcX + ndcY * ndcY;
+      const contactZ = radSq < 1.0 ? Math.sqrt(1.0 - radSq) : 0.0;
+      const contactNormal = new THREE.Vector3(ndcX, ndcY, contactZ).normalize();
+
+      // Trigger 3D expanding shockwave ring & screen ripple burst
+      this.triggerShockwave(contactNormal, 1.0, clientX, clientY);
+
+      // Double tap detection for supercharged dual shockwave ripple
       const now = Date.now();
       if (now - this.lastTapTime < 320) {
-        this.triggerShockwave();
+        this.triggerShockwave(contactNormal, 1.5, clientX, clientY);
         this.triggerHaptic([15, 30, 20]);
       }
       this.lastTapTime = now;
 
       this.isDragging = true;
       this.inertiaVelocity = { x: 0, y: 0 };
-
-      const isTouch = e.touches && e.touches.length > 0;
-      const clientX = isTouch ? e.touches[0].clientX : e.clientX;
-      const clientY = isTouch ? e.touches[0].clientY : e.clientY;
 
       this.previousPointerPos = { x: clientX, y: clientY };
       this.pointerVelocity = { x: 0, y: 0 };
@@ -551,10 +656,47 @@ export class AIOrb {
     window.addEventListener('touchcancel', onPointerUp);
   }
 
-  // Trigger an acoustic shockwave ripple through the particle lattice + tactile thump
-  triggerShockwave() {
-    this.shockwave = 1.0;
+  // Trigger an acoustic shockwave ripple through particle lattice + 3D luminous rings + tactile thump
+  triggerShockwave(originVec = null, intensity = 1.0, clientX = null, clientY = null) {
+    this.shockwave = intensity;
+    this.shockwaveProgress = 0.0;
+    this.shockwaveIntensity = intensity;
+
+    if (originVec) {
+      this.shockwaveOrigin.copy(originVec);
+    } else {
+      this.shockwaveOrigin.set(0, 0, 1);
+    }
+
+    // Spawn 3D expanding luminous shockwave ring
+    const spawnPos = originVec ? originVec.clone().multiplyScalar(2.15) : new THREE.Vector3(0, 0, 0);
+    this.spawnShockwaveRing(spawnPos, this.activeValues.colorA);
+
+    // Spawn screen click burst ripple if pointer coordinates provided
+    if (clientX !== null && clientY !== null) {
+      this.spawnClickBurstRipple(clientX, clientY);
+    }
+
     this.triggerHaptic([20, 40]);
+  }
+
+  // Rhythmic starlight particle displacement pulse triggered synchronously on each uttered word
+  pulseWord(word = '') {
+    const len = word ? word.trim().length : 4;
+    const intensity = Math.min(0.85, 0.32 + Math.min(len, 10) * 0.04);
+
+    // Bump audio reactivity metrics for instantaneous visual response
+    this.audioIntensity = Math.max(this.audioIntensity, intensity);
+    this.audioBass = Math.max(this.audioBass, intensity * 0.95);
+    this.audioTreble = Math.max(this.audioTreble, intensity * 0.75);
+
+    // Light acoustic displacement ripple through the starlight particle wave
+    this.shockwave = Math.max(this.shockwave, 0.28);
+
+    // Subtle micro-haptic tick on mobile devices if supported
+    if (intensity > 0.6) {
+      this.triggerHaptic(8);
+    }
   }
 
   // State transitions: idle, listening, thinking, speaking
@@ -645,11 +787,33 @@ export class AIOrb {
     this.smoothAudio.bass = THREE.MathUtils.lerp(this.smoothAudio.bass, this.audioBass, audioDamp);
     this.smoothAudio.treble = THREE.MathUtils.lerp(this.smoothAudio.treble, this.audioTreble, audioDamp);
 
-    // 5. Shockwave Decay
+    // 5. Shockwave Propagation & Decay
     if (this.shockwave > 0.001) {
       this.shockwave *= 0.93;
     } else {
       this.shockwave = 0.0;
+    }
+
+    if (this.shockwaveIntensity > 0.005) {
+      this.shockwaveProgress += delta * 1.85;
+      this.shockwaveIntensity *= 0.94;
+    } else {
+      this.shockwaveIntensity = 0.0;
+    }
+
+    // Update 3D Expanding Shockwave Rings
+    for (const ring of this.shockwaveRings) {
+      if (!ring.active) continue;
+      ring.progress += delta * ring.speed;
+      if (ring.progress >= 1.0) {
+        ring.active = false;
+        ring.mesh.visible = false;
+        continue;
+      }
+      const easedProgress = Math.pow(ring.progress, 0.72);
+      const rad = THREE.MathUtils.lerp(0.8, ring.maxRadius, easedProgress);
+      ring.material.uniforms.uRadius.value = rad;
+      ring.material.uniforms.uOpacity.value = Math.pow(1.0 - ring.progress, 1.5) * 0.92;
     }
 
     // Organic breathing motion when idle
@@ -667,6 +831,9 @@ export class AIOrb {
     this.waveSphereUniforms.uPointSize.value = this.activeValues.pointSize;
     this.waveSphereUniforms.uStatePulse.value =
       (this.currentState === 'listening' || this.currentState === 'thinking') ? 1.0 : 0.0;
+    this.waveSphereUniforms.uShockwaveProgress.value = this.shockwaveProgress;
+    this.waveSphereUniforms.uShockwaveIntensity.value = this.shockwaveIntensity;
+    this.waveSphereUniforms.uShockwaveOrigin.value.copy(this.shockwaveOrigin);
 
     // 7. Update Inner Core Uniforms
     this.innerCoreUniforms.uTime.value = elapsedTime;

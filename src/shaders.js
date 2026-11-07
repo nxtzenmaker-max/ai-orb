@@ -116,6 +116,11 @@ uniform vec3 uColorB;
 uniform vec3 uColorC;
 uniform float uStatePulse;
 
+// Dynamic Physical Shockwave Ripple Uniforms
+uniform float uShockwaveProgress;
+uniform float uShockwaveIntensity;
+uniform vec3 uShockwaveOrigin;
+
 attribute float aScale;
 attribute float aRandom;
 
@@ -151,11 +156,17 @@ void main() {
   // Dynamic audio reactivity coupling
   float audioDisp = (uAudioBass * 0.75 + uAudioIntensity * 0.5) * snoise(p * 2.8 + vec3(uTime * 2.8));
   float audioRipples = sin(p.y * 16.0 + uTime * 7.0) * (uAudioTreble * 0.28);
-  float shockwavePulse = uStatePulse * 0.25 * sin(uTime * 5.0 + p.y * 6.0);
+  float stateShockPulse = uStatePulse * 0.25 * sin(uTime * 5.0 + p.y * 6.0);
   
+  // Physical spherical shockwave ripple propagating across surface from contact point
+  vec3 shockOrigin = length(uShockwaveOrigin) > 0.01 ? normalize(uShockwaveOrigin) : vec3(0.0, 0.0, 1.0);
+  float distFromImpact = distance(n, shockOrigin);
+  float waveFront = abs(distFromImpact - uShockwaveProgress * 2.3);
+  float shockRipple = exp(-waveFront * waveFront * 28.0) * uShockwaveIntensity;
+
   // Combined radial scalar displacement
   float disp = (w1 + w2 + w3 + w4 + standingHarmonic + standingOvertone) * uDisplacementAmp 
-             + audioDisp * 0.42 + audioRipples + shockwavePulse;
+             + audioDisp * 0.42 + audioRipples + stateShockPulse + shockRipple * 0.45;
   
   // 2. Incompressible Curl-Noise Vector Field Turbulence
   vec3 curlCoord = p * (uNoiseFreq * 0.95) + vec3(t * 0.35, t * 0.25, t * 0.4);
@@ -171,22 +182,30 @@ void main() {
   vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   
-  // View vector & normal for silhouette rim calculation
+  // View vector & normal for silhouette rim & volumetric depth falloff calculation
   vec3 viewDir = normalize(-mvPosition.xyz);
   vec3 transformedNormal = normalize(normalMatrix * n);
-  float rim = 1.0 - abs(dot(transformedNormal, viewDir));
+  float normalDotView = dot(transformedNormal, viewDir);
+  
+  float rim = 1.0 - abs(normalDotView);
   rim = pow(clamp(rim, 0.0, 1.0), 1.25);
+
+  // Volumetric Stereoscopic Depth Falloff:
+  // Front hemisphere faces camera with pristine crystalline brilliance.
+  // Back hemisphere recedes gently into cosmic velvet darkness, creating breathtaking 3D volume.
+  float depthFalloff = smoothstep(-0.35, 0.45, normalDotView);
   
   // Distance-based particle size attenuation
   float viewDist = max(0.1, -mvPosition.z);
   float size = (uPointSize * uPixelRatio * 270.0) / viewDist;
   
-  // Outer silhouette and wave crests expand with radiant halo scale
+  // Outer silhouette, wave crests, and shockwave pulses expand particle sizes
   float crestBoost = smoothstep(0.0, 0.4, disp) * 0.5;
-  gl_PointSize = clamp(size * (aScale * 0.85 + rim * 0.65 + crestBoost * 0.45), 1.0, 26.0);
+  float shockScale = shockRipple * 0.6;
+  gl_PointSize = clamp(size * (aScale * 0.85 + rim * 0.65 + crestBoost * 0.45 + shockScale), 1.0, 28.0);
   
   // 3. Chromatic Starlight Dispersion:
-  // At the crests of waves, refractive starlight splits into a crisp optical prism spectrum
+  // At wave crests & shockwave wavefronts, refractive starlight splits into a crisp prism spectrum
   float dispNormalized = clamp((disp / max(0.01, uDisplacementAmp * 1.5)) * 0.5 + 0.5, 0.0, 1.0);
   float crest = pow(dispNormalized, 2.2);
 
@@ -200,7 +219,7 @@ void main() {
   // Multi-band chromatic dispersion across wave gradient
   vec3 prismA = mix(spectralCyan, spectralViolet, smoothstep(0.2, 0.6, dispNormalized));
   vec3 prismB = mix(spectralEmerald, spectralRose, smoothstep(0.5, 0.9, crest));
-  vec3 prismFinal = mix(prismA, prismB, rim * 0.6 + uAudioTreble * 0.4);
+  vec3 prismFinal = mix(prismA, prismB, rim * 0.6 + uAudioTreble * 0.4 + shockRipple * 0.4);
 
   // Theme chromatic accents
   vec3 themeSheen = mix(uColorA, uColorB, dispNormalized);
@@ -210,15 +229,17 @@ void main() {
   vec3 starlightBase = vec3(0.97, 0.985, 1.0);
 
   // Blend starlight platinum core with chromatic prism dispersion
-  float dispersionAmount = 0.20 + crest * 0.45 + rim * 0.35 + uAudioIntensity * 0.35;
+  float dispersionAmount = 0.20 + crest * 0.45 + rim * 0.35 + shockRipple * 0.65 + uAudioIntensity * 0.35;
   vec3 finalColor = mix(starlightBase, mix(themeSheen, prismFinal, 0.45), clamp(dispersionAmount, 0.0, 0.95));
 
+  // Front particles are bright; back particles softly attenuated for deep stereoscopic 3D volume
+  float alphaAtten = 0.38 + depthFalloff * 0.62;
   vColor = finalColor;
   vPrismColor = prismFinal;
-  vDispersion = crest;
+  vDispersion = crest + shockRipple * 0.6;
   vRim = rim;
   vDisp = disp;
-  vAlpha = clamp(0.58 + rim * 0.42 + crest * 0.3 + uAudioIntensity * 0.35, 0.25, 1.0);
+  vAlpha = clamp((0.55 + rim * 0.45 + crest * 0.3 + shockRipple * 0.45 + uAudioIntensity * 0.35) * alphaAtten, 0.14, 1.0);
 }
 `;
 
@@ -236,8 +257,9 @@ void main() {
   float dist = length(coord);
   if (dist > 0.5) discard;
 
-  // Anti-aliased outer circular boundary
-  float circleAlpha = 1.0 - smoothstep(0.44, 0.50, dist);
+  // Crisp sub-pixel anti-aliasing via analytical screen-space derivatives
+  float delta = fwidth(dist);
+  float circleAlpha = 1.0 - smoothstep(0.5 - max(0.015, delta * 1.5), 0.5, dist);
 
   // 1. Ultra-sharp Crystalline Diamond Core
   float sharpCore = exp(-dist * 16.0) * 1.5;
@@ -260,7 +282,7 @@ void main() {
   // Composite starlight color: crystalline core is blazing platinum-white, halo glows with chromatic dispersion
   vec3 col = haloColor * haloWeight + vec3(1.0, 1.0, 1.0) * (crystallineCore + diffraction * 0.8);
 
-  // Final smoothed alpha
+  // Final smoothed alpha with crisp sub-pixel anti-aliasing
   float alpha = (crystallineCore * 0.85 + haloWeight * 0.55 + diffraction * 0.3) * vAlpha * circleAlpha;
 
   gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
@@ -385,5 +407,48 @@ void main() {
   float alpha = (core * 0.6 + glow * 0.5) * vAlpha * circleAlpha;
   
   gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+}
+`;
+
+// Expanding Luminous 3D Shockwave Ring Shader
+export const shockwaveRingVertexShader = /* glsl */ `
+uniform float uRadius;
+varying vec2 vUv;
+varying vec3 vPosition;
+
+void main() {
+  vUv = uv;
+  vec3 displaced = position * uRadius;
+  vPosition = displaced;
+  vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+}
+`;
+
+export const shockwaveRingFragmentShader = /* glsl */ `
+uniform vec3 uColor;
+uniform float uOpacity;
+varying vec2 vUv;
+varying vec3 vPosition;
+
+void main() {
+  // Compute distance from center of annular ring quad
+  float dist = length(vUv - vec2(0.5));
+  float ringCenter = 0.40;
+  float ringWidth = 0.085;
+  float ringDist = abs(dist - ringCenter);
+  
+  if (ringDist > ringWidth) discard;
+
+  // Luminous Gaussian profile across shockwave ring thickness
+  float crest = 1.0 - smoothstep(0.0, ringWidth, ringDist);
+  crest = pow(crest, 2.0);
+
+  // Intense starlight platinum core with chromatic rainbow fringe
+  vec3 starlightCore = vec3(0.98, 0.99, 1.0);
+  vec3 finalColor = mix(uColor, starlightCore, crest * 0.75);
+
+  float alpha = crest * uOpacity;
+  gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 1.0));
 }
 `;

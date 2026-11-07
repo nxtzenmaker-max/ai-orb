@@ -5,6 +5,7 @@ import { AIEngine } from './ai.js';
 import { sound } from './sound.js';
 
 // DOM Elements
+const ambientAura = document.getElementById('ambient-aura');
 const canvasContainer = document.getElementById('canvas-container');
 const visualizerCanvas = document.getElementById('visualizer-canvas');
 const statusBadge = document.getElementById('status-badge');
@@ -30,6 +31,7 @@ const iconVolumeOn = document.getElementById('icon-volume-on');
 const iconVolumeOff = document.getElementById('icon-volume-off');
 const btnClearChat = document.getElementById('btn-clear-chat');
 const btnToggleLang = document.getElementById('btn-toggle-lang');
+const btnToggleAura = document.getElementById('btn-toggle-aura');
 
 // Instantiate Core Engines
 const orb = new AIOrb(canvasContainer);
@@ -99,13 +101,31 @@ function drawVisualizer() {
 }
 drawVisualizer();
 
-// Simple Markdown Formatter for Assistant Responses
+// Enhanced Markdown Formatter with Copyable Code Blocks
 function formatMarkdown(text) {
   let html = text
-    // Code blocks with syntax container
-    .replace(/```([a-z0-9]*)\n([\s\S]*?)```/gi, (match, lang, code) => {
-      const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return `<pre><code>${escaped}</code></pre>`;
+    // Code blocks with syntax container, language badge, and copy button
+    .replace(/```([a-z0-9_+-]*)\n([\s\S]*?)```/gi, (match, lang, code) => {
+      const language = (lang || 'code').trim();
+      const escaped = code
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return `
+        <div class="code-card">
+          <div class="code-card-header">
+            <span class="code-card-lang">${language.toUpperCase()}</span>
+            <button class="code-copy-btn" type="button" aria-label="Copy code to clipboard">
+              <svg class="copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code>${escaped}</code></pre>
+        </div>
+      `;
     })
     // Inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -115,6 +135,8 @@ function formatMarkdown(text) {
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     // Bullet points
     .replace(/^[•\-\*]\s+(.*)$/gim, '<p>• $1</p>')
+    // Blockquotes
+    .replace(/^>\s+(.*)$/gim, '<blockquote>$1</blockquote>')
     // Line breaks
     .replace(/\n\n+/g, '</p><p>');
 
@@ -211,7 +233,7 @@ async function streamMessage(fullText, onProgress) {
   }
 }
 
-// Update UI Status Badge
+// Update UI Status Badge & Dynamic Aura Synchronization
 function setStatus(state) {
   const stateLabels = {
     idle: 'Idle',
@@ -222,6 +244,10 @@ function setStatus(state) {
 
   statusBadge.dataset.state = state;
   statusText.textContent = stateLabels[state] || state;
+  if (ambientAura) {
+    ambientAura.dataset.state = state;
+  }
+  document.body.dataset.state = state;
   orb.setState(state);
 
   if (state === 'listening') {
@@ -328,9 +354,21 @@ if (drawerDragArea && transcriptDrawer) {
   });
 }
 
+// Active Stream Controller for Instant Live Interruption & Barge-In
+let activeStreamAbortController = null;
+
 // Voice Manager Setup
 const voiceManager = new VoiceManager({
   onTranscript: ({ interim, final }) => {
+    // Instant Live Barge-In: if user starts speaking while AI is speaking, cancel AI immediately!
+    if (voiceManager.isSpeaking || voiceManager.isStreaming) {
+      if (activeStreamAbortController) {
+        activeStreamAbortController.abort();
+        activeStreamAbortController = null;
+      }
+      voiceManager.cancelSpeech();
+    }
+
     if (interim) {
       appendMessage('user', interim, true);
     }
@@ -348,6 +386,10 @@ const voiceManager = new VoiceManager({
   onAudioData: (data) => {
     lastAudioMetrics = data;
     orb.setAudioData(data);
+    if (ambientAura) {
+      const boost = (data.intensity * 0.45 + data.bass * 0.35).toFixed(3);
+      ambientAura.style.setProperty('--audio-boost', boost);
+    }
   },
   onError: (msg) => {
     sound.playChime('error');
@@ -355,10 +397,21 @@ const voiceManager = new VoiceManager({
   }
 });
 
-// Process User Query
+// Process User Query with Instant Streaming Pipeline & Sub-150ms TTFW Voice Dispatch
 async function handleUserPrompt(promptText, isVoice = false) {
   const query = promptText.trim();
   if (!query) return;
+
+  // Instant Barge-In: Abort any previous active generation & voice pipeline immediately
+  if (activeStreamAbortController) {
+    activeStreamAbortController.abort();
+    activeStreamAbortController = null;
+  }
+  voiceManager.cancelSpeech();
+
+  // Create new AbortController for this conversation turn
+  activeStreamAbortController = new AbortController();
+  const signal = activeStreamAbortController.signal;
 
   // Append user message
   appendMessage('user', query);
@@ -373,21 +426,60 @@ async function handleUserPrompt(promptText, isVoice = false) {
   setStatus('thinking');
   orb.triggerShockwave();
 
-  try {
-    // Generate AI Response
-    const response = await ai.answer(query);
+  // Create live assistant message bubble with blinking cursor
+  const bubble = appendMessage('orb', '', false);
+  bubble.innerHTML = '<span class="live-typing-cursor">●</span>';
 
-    // Speak response + Stream text
-    voiceManager.speak(response, () => {
+  let accumulatedText = '';
+  let speechHasStarted = false;
+
+  // Start Instant Streaming Voice Pipeline
+  voiceManager.startStreamingSpeech({
+    onWord: (word, clause) => {
+      // Synchronous word-by-word starlight displacement wave & particle ripple
+      orb.pulseWord(word);
+      // Synchronous live caption toast update
+      showLiveCaption(clause || word);
+    },
+    onClauseStart: (clause) => {
+      if (!speechHasStarted) {
+        speechHasStarted = true;
+        setStatus('speaking');
+      }
+      showLiveCaption(clause);
+    },
+    onComplete: () => {
       setStatus('idle');
-    });
+    }
+  });
 
-    await streamMessage(response);
+  try {
+    // Stream tokens directly from AI engine generator
+    const tokenStream = ai.streamAnswer(query, signal);
+
+    for await (const token of tokenStream) {
+      if (signal.aborted) break;
+
+      accumulatedText += token;
+
+      // Real-time markdown rendering
+      bubble.innerHTML = formatMarkdown(accumulatedText);
+      transcriptBody.scrollTop = transcriptBody.scrollHeight;
+
+      // Concurrently feed token into clause-pipelined TTS engine (sub-150ms TTFW)
+      voiceManager.feedSpeechToken(token);
+    }
+
+    // Finalize stream in voice manager (dispatches any trailing clause)
+    voiceManager.endStreamingSpeech();
   } catch (err) {
-    console.error('Error generating answer:', err);
-    sound.playChime('error');
-    appendMessage('orb', 'An error occurred while synthesizing a neural response.');
-    setStatus('idle');
+    if (err.name !== 'AbortError') {
+      console.error('Error generating streaming response:', err);
+      sound.playChime('error');
+      bubble.innerHTML = formatMarkdown(accumulatedText || 'An error occurred while synthesizing a neural response.');
+      voiceManager.cancelSpeech();
+      setStatus('idle');
+    }
   }
 }
 
@@ -405,9 +497,19 @@ userInput.addEventListener('keydown', (e) => {
   }
 });
 
-// Mic Toggle
+// Mic Toggle with Instant Barge-In
 btnMic.addEventListener('click', () => {
   sound.playChime('tap');
+  // Barge-In: if AI is speaking or streaming, immediately cancel speech and switch to listening
+  if (voiceManager.isSpeaking || voiceManager.isStreaming || statusBadge.dataset.state === 'speaking') {
+    if (activeStreamAbortController) {
+      activeStreamAbortController.abort();
+      activeStreamAbortController = null;
+    }
+    voiceManager.cancelSpeech();
+    voiceManager.startListening();
+    return;
+  }
   voiceManager.toggleListening();
 });
 
@@ -444,6 +546,28 @@ btnToggleMute.addEventListener('click', () => {
   }
 });
 
+// Deepgram Aura Voice Toggle
+const auraVoices = ['aura-asteria-en', 'aura-luna-en', 'aura-helios-en', 'aura-zeus-en'];
+let auraVoiceIdx = 0;
+if (btnToggleAura) {
+  btnToggleAura.addEventListener('click', () => {
+    sound.playChime('tap');
+    if (currentLang === 'hi') {
+      showLiveCaption('⚡ Deepgram Flux Pallavi (Hindi Expressive) Active');
+    } else {
+      auraVoiceIdx = (auraVoiceIdx + 1) % auraVoices.length;
+      const v = auraVoices[auraVoiceIdx];
+      if (voiceManager.deepgram) {
+        voiceManager.deepgram.setEnglishVoice(v);
+      }
+      const name = v.replace('aura-', '').replace('-en', '').toUpperCase();
+      const lastSpan = btnToggleAura.querySelector('span:last-child');
+      if (lastSpan) lastSpan.textContent = name;
+      showLiveCaption(`⚡ Deepgram Aura Voice: ${name}`);
+    }
+  });
+}
+
 // Language Toggle (English / Hindi)
 let currentLang = 'en';
 if (btnToggleLang) {
@@ -458,8 +582,9 @@ if (btnToggleLang) {
   });
 }
 
-// Clear Chat History
+// Clear Chat History & Context Memory
 btnClearChat.addEventListener('click', () => {
+  ai.clearHistory();
   sound.playChime('clear');
   transcriptBody.innerHTML = `
     <div class="message-item orb-msg">
@@ -473,12 +598,63 @@ btnClearChat.addEventListener('click', () => {
   updateBadge();
 });
 
+// One-Click Code Snippet Copy Handler (Event Delegation)
+transcriptBody.addEventListener('click', async (e) => {
+  const copyBtn = e.target.closest('.code-copy-btn');
+  if (!copyBtn) return;
+
+  const codeCard = copyBtn.closest('.code-card');
+  if (!codeCard) return;
+
+  const codeEl = codeCard.querySelector('pre code');
+  if (!codeEl) return;
+
+  const rawCode = codeEl.innerText || codeEl.textContent;
+  try {
+    await navigator.clipboard.writeText(rawCode);
+    sound.playChime('complete');
+    copyBtn.classList.add('copied');
+    const label = copyBtn.querySelector('.copy-label');
+    const prevText = label ? label.textContent : 'Copy';
+    if (label) label.textContent = 'Copied!';
+    setTimeout(() => {
+      copyBtn.classList.remove('copied');
+      if (label) label.textContent = prevText;
+    }, 2000);
+  } catch (err) {
+    console.warn('Clipboard copy notice:', err);
+  }
+});
+
+// Restore Conversation History from Persistent Storage on Startup
+function restoreHistory() {
+  const history = ai.getHistory();
+  if (history && history.length > 0) {
+    transcriptBody.innerHTML = '';
+    messageCount = 0;
+    history.forEach(item => {
+      appendMessage(item.role === 'user' ? 'user' : 'orb', item.content);
+    });
+    updateBadge();
+  }
+}
+restoreHistory();
+
 // Global Keyboard Shortcuts
 window.addEventListener('keydown', (e) => {
-  // Space bar toggles mic when not inside an active text input
+  // Space bar toggles mic when not inside an active text input (with instant barge-in)
   if (e.code === 'Space' && document.activeElement !== userInput) {
     e.preventDefault();
     sound.playChime('tap');
+    if (voiceManager.isSpeaking || voiceManager.isStreaming || statusBadge.dataset.state === 'speaking') {
+      if (activeStreamAbortController) {
+        activeStreamAbortController.abort();
+        activeStreamAbortController = null;
+      }
+      voiceManager.cancelSpeech();
+      voiceManager.startListening();
+      return;
+    }
     voiceManager.toggleListening();
   }
   // Escape stops speech synthesis or listening, or closes drawer
@@ -488,7 +664,11 @@ window.addEventListener('keydown', (e) => {
       closeDrawer();
       return;
     }
+    if (activeStreamAbortController) {
+      activeStreamAbortController.abort();
+      activeStreamAbortController = null;
+    }
     voiceManager.stopListening();
-    voiceManager.stopSpeaking();
+    voiceManager.cancelSpeech();
   }
 });
